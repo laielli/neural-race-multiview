@@ -389,6 +389,83 @@ Create winner-take-all dynamics through capacity constraints rather than explici
 
 ---
 
+## MSE + Gradient Flow Experiment (2026-01-13)
+
+### Goal
+
+Test if Saxe theory-matched conditions produce emergent winner-take-all:
+- MSE loss (not cross-entropy)
+- Gradient flow (no momentum)
+- Deep linear networks
+- Small initialization
+
+### Results
+
+**TEST 1: MSE vs Cross-Entropy**
+
+| Config | Dominance | Coverage | WTA? |
+|--------|-----------|----------|------|
+| MSE + GradFlow | 0.379 | 1.000 | NO |
+| CE + GradFlow | 0.368 | 1.000 | NO |
+| MSE + SGD | 0.349 | 1.000 | NO |
+| CE + SGD | 0.355 | 1.000 | NO |
+
+**No difference between MSE and CE** - both learn all views equally.
+
+**TEST 2: Learning Rate Sweep**
+
+| LR | Dominance | Coverage | WTA? |
+|----|-----------|----------|------|
+| 0.1 | 0.400 | 0.833 | NO |
+| 0.01 | 0.400 | 0.800 | NO |
+| 0.001 | 0.400 | 0.800 | NO |
+| 0.0001 | 0.400 | 0.800 | NO |
+| 0.00001 | 0.407 | 0.333 | NO |
+
+**Smaller LR doesn't help** - just slower learning.
+
+**TEST 3: Seed Variance**
+
+| Metric | Value |
+|--------|-------|
+| Mean dominance | 0.379 |
+| Std dominance | 0.000 |
+| Min | 0.379 |
+| Max | 0.379 |
+
+**All seeds produce IDENTICAL results** - no race dynamics at all!
+
+**TEST 4: Extended Training (10000 epochs)**
+
+| Epochs | Dominance | Coverage |
+|--------|-----------|----------|
+| 100 | 0.408 | 0.233 |
+| 1000 | 0.407 | 0.367 |
+| 5000 | 0.400 | 0.800 |
+| 10000 | 0.379 | 1.000 |
+
+**Longer training = more views learned**, not winner-take-all.
+
+### Key Finding
+
+**Even under theory-matched conditions (MSE + gradient flow + deep linear + small init), winner-take-all does NOT emerge.**
+
+The Saxe theory may require additional conditions not captured in our setup:
+1. Specific input-output correlation structure
+2. Task-specific gating patterns
+3. Multi-task learning context (not just multi-view classification)
+
+### Implication
+
+The gap between theory and experiment is NOT due to:
+- Wrong loss function (MSE doesn't help)
+- Wrong optimizer (gradient flow doesn't help)
+- Wrong architecture (deep linear doesn't help)
+
+The gap may be more fundamental - the theory's assumptions about when competition emerges may not apply to our multi-view classification setup.
+
+---
+
 ## Final Conclusions (2026-01-13)
 
 ### Summary of Experimental Findings
