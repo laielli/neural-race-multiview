@@ -351,6 +351,232 @@ def train_with_competition(
     return history
 
 
+def train_gated_dln(
+    model,
+    X,
+    Y,
+    epochs: int = 500,
+    lr: float = 0.02,
+    log_interval: int = 10,
+    track_svd: bool = True,
+    verbose: bool = True
+):
+    """
+    Train GatedDLN with MSE loss and gradient flow, tracking singular values.
+
+    This matches the Saxe et al. training setup:
+    - MSE loss
+    - SGD with no momentum (gradient flow)
+    - Track singular values to observe race dynamics
+
+    Args:
+        model: GatedDLN or GatedMultiViewNet instance
+        X: Input data, shape (N, d) or list of (N, d_input) per pathway
+        Y: Target data, shape (N, d_output)
+        epochs: Number of training epochs
+        lr: Learning rate
+        log_interval: How often to log metrics
+        track_svd: If True, track singular values during training
+        verbose: Whether to print progress
+
+    Returns:
+        dict: Training history including loss and optionally SVD history
+    """
+    # Gradient flow: SGD with no momentum
+    optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.0)
+
+    history = {
+        'loss': [],
+        'epochs_logged': [],
+        'pathway_strengths': [],
+        'dominance': []
+    }
+
+    if track_svd:
+        history['svd'] = {
+            'encoders': [],
+            'hidden': [],
+            'decoders': []
+        }
+
+    iterator = range(epochs)
+    if verbose:
+        iterator = tqdm(iterator, desc="Training GatedDLN")
+
+    for epoch in iterator:
+        model.train()
+        optimizer.zero_grad()
+
+        # Forward pass computes gated loss
+        loss = model(X, Y)
+        loss.backward()
+        optimizer.step()
+
+        # Logging
+        if epoch % log_interval == 0 or epoch == epochs - 1:
+            history['loss'].append(loss.item())
+            history['epochs_logged'].append(epoch)
+            history['pathway_strengths'].append(model.get_all_pathway_strengths())
+            history['dominance'].append(model.compute_dominance())
+
+            if track_svd:
+                svs = model.get_singular_values()
+                history['svd']['encoders'].append(svs['encoders'])
+                history['svd']['hidden'].append(svs['hidden'])
+                history['svd']['decoders'].append(svs['decoders'])
+
+            if verbose:
+                dom = history['dominance'][-1]
+                iterator.set_postfix(loss=f"{loss.item():.4f}", dom=f"{dom:.3f}")
+
+    return history
+
+
+def train_gated_multiview(
+    model,
+    dataset,
+    epochs: int = 500,
+    lr: float = 0.02,
+    batch_size: int = None,
+    log_interval: int = 10,
+    track_svd: bool = True,
+    verbose: bool = True
+):
+    """
+    Train GatedMultiViewNet on multi-view dataset.
+
+    Args:
+        model: GatedMultiViewNet instance
+        dataset: MultiViewDataset instance
+        epochs: Number of training epochs
+        lr: Learning rate
+        batch_size: If None, use full batch (required for theory match)
+        log_interval: How often to log metrics
+        track_svd: If True, track singular values
+        verbose: Whether to print progress
+
+    Returns:
+        dict: Training history
+    """
+    # Get data
+    X, Y = dataset.get_tensors()
+
+    # Convert labels to one-hot for MSE loss
+    Y_onehot = F.one_hot(Y, num_classes=dataset.K).float()
+
+    # Gradient flow: SGD with no momentum
+    optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.0)
+
+    history = {
+        'loss': [],
+        'accuracy': [],
+        'epochs_logged': [],
+        'pathway_strengths': [],
+        'dominance': [],
+        'view_coverage': []
+    }
+
+    if track_svd:
+        history['svd'] = {
+            'encoders': [],
+            'hidden': [],
+            'decoders': []
+        }
+
+    iterator = range(epochs)
+    if verbose:
+        iterator = tqdm(iterator, desc="Training GatedMultiView")
+
+    for epoch in iterator:
+        model.train()
+
+        if batch_size is None:
+            # Full batch gradient (closer to gradient flow)
+            optimizer.zero_grad()
+
+            # Split input into views
+            x_views = [X[:, i*model.d_view:(i+1)*model.d_view] for i in range(model.M)]
+
+            # Compute loss through gated pathways
+            total_loss = 0.0
+            for i, x_v in enumerate(x_views):
+                h = model.encoders[i](x_v)
+                h = model.hidden_layer(h)
+                for j in range(model.M):
+                    if model.gate[i, j] > 0:
+                        out = model.decoders[j](h)
+                        loss = model.loss_fn(out, Y_onehot).mean()
+                        total_loss = total_loss + loss
+
+            total_loss.backward()
+            optimizer.step()
+            epoch_loss = total_loss.item()
+
+        else:
+            # Mini-batch training
+            perm = torch.randperm(len(X))
+            X_shuf, Y_shuf = X[perm], Y_onehot[perm]
+
+            epoch_loss = 0.0
+            num_batches = 0
+
+            for i in range(0, len(X), batch_size):
+                x_batch = X_shuf[i:i+batch_size]
+                y_batch = Y_shuf[i:i+batch_size]
+
+                optimizer.zero_grad()
+                x_views = [x_batch[:, k*model.d_view:(k+1)*model.d_view] for k in range(model.M)]
+
+                total_loss = 0.0
+                for ii, x_v in enumerate(x_views):
+                    h = model.encoders[ii](x_v)
+                    h = model.hidden_layer(h)
+                    for jj in range(model.M):
+                        if model.gate[ii, jj] > 0:
+                            out = model.decoders[jj](h)
+                            loss = model.loss_fn(out, y_batch).mean()
+                            total_loss = total_loss + loss
+
+                total_loss.backward()
+                optimizer.step()
+
+                epoch_loss += total_loss.item()
+                num_batches += 1
+
+            epoch_loss /= num_batches
+
+        # Logging
+        if epoch % log_interval == 0 or epoch == epochs - 1:
+            model.eval()
+
+            # Compute accuracy
+            with torch.no_grad():
+                logits = model.forward_multiview(X)
+                acc = (logits.argmax(dim=1) == Y).float().mean().item()
+
+            history['loss'].append(epoch_loss)
+            history['accuracy'].append(acc)
+            history['epochs_logged'].append(epoch)
+            history['pathway_strengths'].append(model.get_all_pathway_strengths())
+            history['dominance'].append(model.compute_dominance())
+
+            # Measure view coverage
+            cov = model.measure_view_coverage(dataset, threshold=0.1)
+            history['view_coverage'].append(cov)
+
+            if track_svd:
+                svs = model.get_singular_values()
+                history['svd']['encoders'].append(svs['encoders'])
+                history['svd']['hidden'].append(svs['hidden'])
+                history['svd']['decoders'].append(svs['decoders'])
+
+            if verbose:
+                dom = history['dominance'][-1]
+                iterator.set_postfix(loss=f"{epoch_loss:.4f}", acc=f"{acc:.3f}", dom=f"{dom:.3f}")
+
+    return history
+
+
 def train_teachers(
     dataset,
     num_teachers: int = 5,
