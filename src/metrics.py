@@ -243,3 +243,38 @@ def count_surviving_pathways(model, dataset, threshold_ratio=0.1):
         surviving[y] = sum(1 for s in strengths if s > threshold)
 
     return surviving
+
+
+def compute_pathway_dominance(model, dataset):
+    """
+    Compute average dominance ratio across all classes.
+
+    Dominance = max pathway strength / sum of pathway strengths for each class.
+
+    Winner-take-all: dominance ≈ 1 (one pathway dominates)
+    Equal pathways: dominance ≈ 1/M
+
+    Args:
+        model: Network instance
+        dataset: MultiViewDataset instance
+
+    Returns:
+        float: Average dominance ratio in [1/M, 1]
+    """
+    dominances = []
+
+    for y in range(dataset.K):
+        strengths = []
+        for m in range(dataset.M):
+            phi_ym = dataset.get_view_feature(y, m)
+            strengths.append(model.get_pathway_strength(phi_ym))
+
+        total = sum(strengths)
+        if total > 0:
+            dominance = max(strengths) / total
+        else:
+            dominance = 1.0 / dataset.M  # Equal when all zero
+
+        dominances.append(dominance)
+
+    return np.mean(dominances)

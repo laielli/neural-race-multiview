@@ -138,9 +138,62 @@ class MultiViewNet(nn.Module):
         return strengths
 
 
+class DeepLinearNet(nn.Module):
+    """
+    Deep linear network (no ReLU) for matching Saxe et al. theory exactly.
+
+    The race dynamics theory is derived for linear networks with gradient flow.
+    This class provides an exact match to the theoretical assumptions.
+
+    Args:
+        d: Input dimension
+        hidden: Hidden layer width
+        K: Number of output classes
+    """
+
+    def __init__(self, d: int = 150, hidden: int = 200, K: int = 10):
+        super().__init__()
+        self.d = d
+        self.hidden = hidden
+        self.K = K
+
+        self.fc1 = nn.Linear(d, hidden, bias=False)  # No bias for theory match
+        self.fc2 = nn.Linear(hidden, K, bias=False)
+
+    def forward(self, x):
+        # Linear activations (no ReLU)
+        h = self.fc1(x)
+        return self.fc2(h)
+
+    def get_pathway_strength(self, phi_ym):
+        """Compute pathway strength s_{y,m} = ||R_{y,m}||."""
+        with torch.no_grad():
+            x = phi_ym.unsqueeze(0)
+            R_ym = self(x).squeeze(0)
+            return R_ym.norm().item()
+
+    def get_all_pathway_strengths(self, dataset):
+        """Measure pathway strength for all (class, view) pairs."""
+        strengths = {}
+        for y in range(dataset.K):
+            for m in range(dataset.M):
+                phi_ym = dataset.get_view_feature(y, m)
+                strengths[(y, m)] = self.get_pathway_strength(phi_ym)
+        return strengths
+
+
 def init_weights(module):
     """Standard weight initialization for reproducibility."""
     if isinstance(module, nn.Linear):
         nn.init.kaiming_normal_(module.weight, mode='fan_in', nonlinearity='relu')
+        if module.bias is not None:
+            nn.init.zeros_(module.bias)
+
+
+def init_weights_linear(module):
+    """Weight initialization for deep linear networks (small scale for gradient flow)."""
+    if isinstance(module, nn.Linear):
+        # Small initialization to start in the early phase of race dynamics
+        nn.init.normal_(module.weight, mean=0.0, std=0.01)
         if module.bias is not None:
             nn.init.zeros_(module.bias)
