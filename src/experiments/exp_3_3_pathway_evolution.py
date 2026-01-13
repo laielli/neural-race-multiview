@@ -36,10 +36,12 @@ def experiment_3_3_pathway_evolution_comparison(
     hidden: int = 200,
     epochs: int = 200,
     temperature: float = 4.0,
-    lr: float = 0.01,
+    lr: float = 0.001,  # Smaller LR for gradient flow approximation
     batch_size: int = 128,
     n_samples: int = 10000,
     log_interval: int = 5,
+    loss_type: str = 'mse',  # MSE to match Saxe et al. theory
+    gradient_flow: bool = True,  # No momentum for gradient flow
     output_dir: str = 'results/figures',
     verbose: bool = True
 ):
@@ -71,6 +73,7 @@ def experiment_3_3_pathway_evolution_comparison(
         print("Experiment 3.3: Pathway Evolution Comparison")
         print(f"Config: seed={seed}, target_class={y_target}")
         print(f"K={K}, M={M}, {num_teachers} teachers")
+        print(f"Loss: {loss_type.upper()}, Gradient flow: {gradient_flow}")
         print("=" * 60)
 
     dataset = MultiViewDataset(
@@ -89,7 +92,8 @@ def experiment_3_3_pathway_evolution_comparison(
         teacher.apply(init_weights)
 
         train_hard_labels(teacher, dataset, epochs=100, lr=lr,
-                          batch_size=batch_size, verbose=False)
+                          batch_size=batch_size, verbose=False,
+                          loss_type=loss_type, gradient_flow=gradient_flow)
         teachers.append(teacher)
 
     # Train with hard labels (with pathway tracking)
@@ -108,7 +112,9 @@ def experiment_3_3_pathway_evolution_comparison(
         log_interval=log_interval,
         track_pathways=True,
         track_classes=[y_target],
-        verbose=verbose
+        verbose=verbose,
+        loss_type=loss_type,
+        gradient_flow=gradient_flow
     )
 
     # Train with KD (same init, with pathway tracking)
@@ -128,7 +134,8 @@ def experiment_3_3_pathway_evolution_comparison(
         log_interval=log_interval,
         track_pathways=True,
         track_classes=[y_target],
-        verbose=verbose
+        verbose=verbose,
+        gradient_flow=gradient_flow
     )
 
     # Count surviving pathways
@@ -219,7 +226,9 @@ def experiment_3_3_pathway_evolution_comparison(
             'epochs': epochs,
             'temperature': temperature,
             'lr': lr,
-            'log_interval': log_interval
+            'log_interval': log_interval,
+            'loss_type': loss_type,
+            'gradient_flow': gradient_flow
         },
         'metrics': {
             'hard_label': {
@@ -260,6 +269,9 @@ def run_multiple_classes(
     num_classes: int = 3,
     num_teachers: int = 5,
     epochs: int = 200,
+    lr: float = 0.001,
+    loss_type: str = 'mse',
+    gradient_flow: bool = True,
     output_dir: str = 'results/figures',
     verbose: bool = True
 ):
@@ -284,6 +296,9 @@ def run_multiple_classes(
             y_target=y,
             num_teachers=num_teachers,
             epochs=epochs,
+            lr=lr,
+            loss_type=loss_type,
+            gradient_flow=gradient_flow,
             output_dir=output_dir,
             verbose=False
         )
@@ -313,7 +328,10 @@ def main():
     parser.add_argument('--class', dest='y_target', type=int, default=0, help='Target class')
     parser.add_argument('--teachers', type=int, default=5, help='Number of teachers')
     parser.add_argument('--epochs', type=int, default=200, help='Training epochs')
+    parser.add_argument('--lr', type=float, default=0.001, help='Learning rate (small for gradient flow)')
     parser.add_argument('--temperature', type=float, default=4.0, help='KD temperature')
+    parser.add_argument('--loss', type=str, default='mse', choices=['mse', 'ce'], help='Loss type')
+    parser.add_argument('--no-gradient-flow', action='store_true', help='Disable gradient flow (use momentum)')
     parser.add_argument('--multi-class', type=int, default=0, help='Run for multiple classes')
     parser.add_argument('--quick', action='store_true', help='Quick test')
     parser.add_argument('--output', type=str, default='results/', help='Output directory')
@@ -324,6 +342,7 @@ def main():
         args.teachers = 3
 
     output_dir = Path(args.output) / 'figures'
+    gradient_flow = not args.no_gradient_flow
 
     if args.multi_class > 0:
         results = run_multiple_classes(
@@ -331,6 +350,9 @@ def main():
             num_classes=args.multi_class,
             num_teachers=args.teachers,
             epochs=args.epochs,
+            lr=args.lr,
+            loss_type=args.loss,
+            gradient_flow=gradient_flow,
             output_dir=str(output_dir)
         )
     else:
@@ -339,7 +361,10 @@ def main():
             y_target=args.y_target,
             num_teachers=args.teachers,
             epochs=args.epochs,
+            lr=args.lr,
             temperature=args.temperature,
+            loss_type=args.loss,
+            gradient_flow=gradient_flow,
             output_dir=str(output_dir)
         )
 

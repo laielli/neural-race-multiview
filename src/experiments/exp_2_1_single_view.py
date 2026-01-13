@@ -30,9 +30,11 @@ def experiment_2_1_single_view_convergence(
     d_view: int = 50,
     hidden: int = 200,
     epochs: int = 100,
-    lr: float = 0.01,
+    lr: float = 0.001,  # Smaller LR for gradient flow approximation
     batch_size: int = 128,
     n_samples: int = 10000,
+    loss_type: str = 'mse',  # MSE to match Saxe et al. theory
+    gradient_flow: bool = True,  # No momentum for gradient flow
     verbose: bool = True
 ):
     """
@@ -60,6 +62,7 @@ def experiment_2_1_single_view_convergence(
         print("=" * 60)
         print("Experiment 2.1: Single-View Convergence")
         print(f"Config: K={K}, M={M}, d_view={d_view}, epochs={epochs}")
+        print(f"Loss: {loss_type.upper()}, Gradient flow: {gradient_flow}")
         print(f"Expected coverage: {1/M:.3f}")
         print("=" * 60)
 
@@ -75,13 +78,15 @@ def experiment_2_1_single_view_convergence(
         model = MultiViewNet(d=dataset.d, hidden=hidden, K=dataset.K)
         model.apply(init_weights)
 
-        # Train
+        # Train with MSE loss + gradient flow to match Saxe et al. theory
         history = train_hard_labels(
             model, dataset,
             epochs=epochs,
             lr=lr,
             batch_size=batch_size,
-            verbose=False
+            verbose=False,
+            loss_type=loss_type,
+            gradient_flow=gradient_flow
         )
 
         # Measure coverage
@@ -130,7 +135,9 @@ def experiment_2_1_single_view_convergence(
             'epochs': epochs,
             'lr': lr,
             'batch_size': batch_size,
-            'n_samples': n_samples
+            'n_samples': n_samples,
+            'loss_type': loss_type,
+            'gradient_flow': gradient_flow
         },
         'metrics': {
             'mean_coverage': float(mean_cov),
@@ -147,6 +154,9 @@ def main():
     parser = argparse.ArgumentParser(description='Experiment 2.1: Single-View Convergence')
     parser.add_argument('--seeds', type=int, default=30, help='Number of random seeds')
     parser.add_argument('--epochs', type=int, default=100, help='Training epochs')
+    parser.add_argument('--lr', type=float, default=0.001, help='Learning rate (small for gradient flow)')
+    parser.add_argument('--loss', type=str, default='mse', choices=['mse', 'ce'], help='Loss type')
+    parser.add_argument('--no-gradient-flow', action='store_true', help='Disable gradient flow (use momentum)')
     parser.add_argument('--quick', action='store_true', help='Quick test with fewer seeds')
     parser.add_argument('--output', type=str, default='results/', help='Output directory')
     args = parser.parse_args()
@@ -157,7 +167,10 @@ def main():
 
     results = experiment_2_1_single_view_convergence(
         num_seeds=args.seeds,
-        epochs=args.epochs
+        epochs=args.epochs,
+        lr=args.lr,
+        loss_type=args.loss,
+        gradient_flow=not args.no_gradient_flow
     )
 
     # Save results

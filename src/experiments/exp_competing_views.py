@@ -23,7 +23,7 @@ from src.metrics import measure_view_coverage
 from src.train import train_hard_labels, train_kd
 
 
-def run_comparison(num_seeds=10, epochs=100, output_dir='results'):
+def run_comparison(num_seeds=10, epochs=100, lr=0.001, loss_type='mse', gradient_flow=True, output_dir='results'):
     """
     Compare orthogonal vs competing views for winner-take-all dynamics.
     """
@@ -39,6 +39,7 @@ def run_comparison(num_seeds=10, epochs=100, output_dir='results'):
     print("=" * 70)
     print("Competing Views Experiment")
     print(f"Comparing orthogonal slots vs shared dimensions")
+    print(f"Loss: {loss_type.upper()}, Gradient flow: {gradient_flow}")
     print("=" * 70)
 
     for seed in range(num_seeds):
@@ -51,7 +52,8 @@ def run_comparison(num_seeds=10, epochs=100, output_dir='results'):
         model_orth = MultiViewNet(d=dataset_orth.d, hidden=200, K=dataset_orth.K)
         model_orth.apply(init_weights)
 
-        train_hard_labels(model_orth, dataset_orth, epochs=epochs, verbose=False)
+        train_hard_labels(model_orth, dataset_orth, epochs=epochs, lr=lr, verbose=False,
+                          loss_type=loss_type, gradient_flow=gradient_flow)
 
         cov_orth = measure_view_coverage(model_orth, dataset_orth)
         dom_orth, acc_orth = measure_dominance(model_orth, dataset_orth)
@@ -70,7 +72,8 @@ def run_comparison(num_seeds=10, epochs=100, output_dir='results'):
         model_comp = MultiViewNet(d=dataset_comp.d, hidden=200, K=dataset_comp.K)
         model_comp.apply(init_weights)
 
-        train_hard_labels(model_comp, dataset_comp, epochs=epochs, verbose=False)
+        train_hard_labels(model_comp, dataset_comp, epochs=epochs, lr=lr, verbose=False,
+                          loss_type=loss_type, gradient_flow=gradient_flow)
 
         cov_comp = measure_view_coverage(model_comp, dataset_comp)
         dom_comp, acc_comp = measure_dominance(model_comp, dataset_comp)
@@ -102,7 +105,7 @@ def run_comparison(num_seeds=10, epochs=100, output_dir='results'):
     final_results = {
         'experiment': 'competing_views_comparison',
         'timestamp': datetime.now().isoformat(),
-        'config': {'num_seeds': num_seeds, 'epochs': epochs},
+        'config': {'num_seeds': num_seeds, 'epochs': epochs, 'lr': lr, 'loss_type': loss_type, 'gradient_flow': gradient_flow},
         'results': {
             name: {
                 'coverage': {'mean': float(np.mean(results[name]['coverage'])),
@@ -190,6 +193,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--seeds', type=int, default=10)
     parser.add_argument('--epochs', type=int, default=100)
+    parser.add_argument('--lr', type=float, default=0.001, help='Learning rate (small for gradient flow)')
+    parser.add_argument('--loss', type=str, default='mse', choices=['mse', 'ce'], help='Loss type')
+    parser.add_argument('--no-gradient-flow', action='store_true', help='Disable gradient flow (use momentum)')
     parser.add_argument('--quick', action='store_true')
     parser.add_argument('--output', type=str, default='results')
     args = parser.parse_args()
@@ -198,4 +204,6 @@ if __name__ == '__main__':
         args.seeds = 3
         args.epochs = 50
 
-    run_comparison(num_seeds=args.seeds, epochs=args.epochs, output_dir=args.output)
+    run_comparison(num_seeds=args.seeds, epochs=args.epochs, lr=args.lr,
+                   loss_type=args.loss, gradient_flow=not args.no_gradient_flow,
+                   output_dir=args.output)

@@ -136,7 +136,8 @@ def train_kd(
     log_interval: int = 10,
     track_pathways: bool = False,
     track_classes: list = None,
-    verbose: bool = True
+    verbose: bool = True,
+    gradient_flow: bool = False
 ):
     """
     Train student via knowledge distillation from teacher ensemble.
@@ -155,11 +156,16 @@ def train_kd(
         track_pathways: If True, record pathway strengths during training
         track_classes: List of class indices to track (default: [0])
         verbose: Whether to print progress
+        gradient_flow: If True, use vanilla SGD (no momentum) to approximate gradient flow
 
     Returns:
         dict: Training history including loss, accuracy, and optionally pathway strengths
     """
-    optimizer = torch.optim.SGD(student.parameters(), lr=lr, momentum=0.9)
+    # Optimizer: gradient flow = no momentum
+    if gradient_flow:
+        optimizer = torch.optim.SGD(student.parameters(), lr=lr, momentum=0.0)
+    else:
+        optimizer = torch.optim.SGD(student.parameters(), lr=lr, momentum=0.9)
 
     if track_classes is None:
         track_classes = [0]

@@ -33,9 +33,11 @@ def experiment_3_1_kd_coverage(
     hidden: int = 200,
     epochs: int = 100,
     temperature: float = 4.0,
-    lr: float = 0.01,
+    lr: float = 0.001,  # Smaller LR for gradient flow approximation
     batch_size: int = 128,
     n_samples: int = 10000,
+    loss_type: str = 'mse',  # MSE to match Saxe et al. theory
+    gradient_flow: bool = True,  # No momentum for gradient flow
     output_dir: str = 'results/figures',
     verbose: bool = True
 ):
@@ -72,6 +74,7 @@ def experiment_3_1_kd_coverage(
         print("Experiment 3.1: KD Coverage Transfer")
         print(f"Config: {num_teachers} teachers, {num_trials} trials")
         print(f"K={K}, M={M}, temperature={temperature}")
+        print(f"Loss: {loss_type.upper()}, Gradient flow: {gradient_flow}")
         print("=" * 60)
 
     for trial in range(num_trials):
@@ -94,7 +97,8 @@ def experiment_3_1_kd_coverage(
             teacher.apply(init_weights)
 
             train_hard_labels(teacher, dataset, epochs=epochs, lr=lr,
-                              batch_size=batch_size, verbose=False)
+                              batch_size=batch_size, verbose=False,
+                              loss_type=loss_type, gradient_flow=gradient_flow)
             teachers.append(teacher)
 
             t_cov = measure_view_coverage(teacher, dataset)
@@ -117,7 +121,8 @@ def experiment_3_1_kd_coverage(
         student_hard.apply(init_weights)
 
         train_hard_labels(student_hard, dataset, epochs=epochs, lr=lr,
-                          batch_size=batch_size, verbose=False)
+                          batch_size=batch_size, verbose=False,
+                          loss_type=loss_type, gradient_flow=gradient_flow)
 
         hard_cov = measure_view_coverage(student_hard, dataset)
         results['hard_label'].append(hard_cov)
@@ -131,7 +136,7 @@ def experiment_3_1_kd_coverage(
 
         train_kd(student_kd, teachers, dataset, epochs=epochs,
                  temperature=temperature, lr=lr, batch_size=batch_size,
-                 verbose=False)
+                 verbose=False, gradient_flow=gradient_flow)
 
         kd_cov = measure_view_coverage(student_kd, dataset)
         results['kd'].append(kd_cov)
@@ -216,7 +221,9 @@ def experiment_3_1_kd_coverage(
             'temperature': temperature,
             'lr': lr,
             'batch_size': batch_size,
-            'n_samples': n_samples
+            'n_samples': n_samples,
+            'loss_type': loss_type,
+            'gradient_flow': gradient_flow
         },
         'metrics': {
             'hard_label': {'mean': float(mean_hard), 'std': float(std_hard)},
@@ -242,7 +249,10 @@ def main():
     parser.add_argument('--teachers', type=int, default=5, help='Number of teachers')
     parser.add_argument('--trials', type=int, default=10, help='Number of trials')
     parser.add_argument('--epochs', type=int, default=100, help='Training epochs')
+    parser.add_argument('--lr', type=float, default=0.001, help='Learning rate (small for gradient flow)')
     parser.add_argument('--temperature', type=float, default=4.0, help='KD temperature')
+    parser.add_argument('--loss', type=str, default='mse', choices=['mse', 'ce'], help='Loss type')
+    parser.add_argument('--no-gradient-flow', action='store_true', help='Disable gradient flow (use momentum)')
     parser.add_argument('--quick', action='store_true', help='Quick test')
     parser.add_argument('--output', type=str, default='results/', help='Output directory')
     args = parser.parse_args()
@@ -256,7 +266,10 @@ def main():
         num_teachers=args.teachers,
         num_trials=args.trials,
         epochs=args.epochs,
+        lr=args.lr,
         temperature=args.temperature,
+        loss_type=args.loss,
+        gradient_flow=not args.no_gradient_flow,
         output_dir=str(Path(args.output) / 'figures')
     )
 
