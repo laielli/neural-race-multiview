@@ -1,0 +1,15 @@
+# KDMech Experiment Dependencies
+
+# Core
+torch>=2.0
+numpy>=1.24
+scipy>=1.10
+
+# Visualization
+matplotlib>=3.7
+
+# Progress tracking
+tqdm>=4.65
+
+# Optional: experiment tracking
+# wandb>=0.15
