@@ -8,14 +8,15 @@
 
 ## Executive Summary
 
-After extensive experimentation, we have identified a fundamental gap between the neural race theory and experimental reality:
+After extensive experimentation and literature review, we have identified the root cause of the theory-experiment mismatch:
 
-1. **Winner-take-all dynamics do NOT emerge naturally** from standard neural network training
-2. **Explicit competition mechanisms** (loss terms) are required to produce winner-take-all
-3. **Knowledge distillation does NOT break competition** — contradicting Theorem 3's prediction
-4. **KD performs WORSE under competition** — soft labels are weaker than hard labels
+1. **Neural race theory applies to MULTI-TASK learning**, not single-task multi-view classification (confirmed by Jarvis et al. 2025)
+2. **Our single-task setup has no competition** — all views serve the same goal, so no interference
+3. **Zero seed variance** (dominance = 0.379 ± 0.000) proves no race dynamics are occurring
+4. **Explicit competition CAN create winner-take-all**, but this is by design, not emergent
+5. **KD performs WORSE under competition** — soft labels are weaker than hard labels
 
-**Bottom line**: The paper's central thesis requires revision. We need guidance on how to proceed.
+**Bottom line**: The experiments are correct. The theoretical framing was misapplied. We need guidance on whether to (A) test multi-task structure to properly validate the theory, or (B) pivot the paper direction.
 
 ---
 
@@ -172,17 +173,24 @@ The key competition term: `(1 - Σs²/s_max²)` is supposed to emerge automatica
 
 4. **Zero seed variance**: 10 different seeds produce IDENTICAL results (dominance = 0.379 ± 0.000), proving there is NO race dynamics occurring
 
-### The Fundamental Issue
+### The Fundamental Issue: Single-Task vs Multi-Task (CONFIRMED)
 
-The Saxe theory may apply to a different problem structure:
-- **Multi-task learning** with shared representations (their main application)
-- **Specific input-output correlation structures** that create competition
-- **Task-induced gating** where different tasks compete for shared pathways
+**New evidence from Jarvis et al. 2025** (ICLR, same Saxe group) confirms our hypothesis:
 
-Our **multi-view classification** setup may simply not create the conditions for neural race:
-- Orthogonal view slots don't compete — they're independent
-- Single classification task doesn't create multi-task competition
-- No shared representation bottleneck that forces selection
+The neural race reduction applies to **multi-task learning**, not single-task multi-view classification.
+
+| Our Setup | What Theory Requires |
+|-----------|---------------------|
+| All views → same label | Different views → different tasks |
+| Single classification task | Multiple conflicting objectives |
+| Views help each other | Solving Task A hurts Task B |
+| No interference between views | Task interference creates competition |
+
+**Why our views don't compete**: They all serve the same goal (correct classification). The network has no reason to suppress any view — learning View 1 doesn't hurt learning View 2.
+
+**The Jarvis paper shows**: In multi-task settings, networks develop "structured mixed selectivity" where pathways compete to serve different tasks. The "race" determines HOW the network allocates resources across tasks, not WHICH view it uses for a single task.
+
+**This explains zero seed variance**: No competition → No race → No winner variation. All seeds converge to the same solution because there's only one optimal strategy (learn everything).
 
 ### Why KD Fails to Break Competition
 
@@ -198,6 +206,8 @@ Our **multi-view classification** setup may simply not create the conditions for
 
 | Theory Assumes | Reality Shows |
 |----------------|---------------|
+| **Multi-task structure** | Single-task classification |
+| Task interference creates competition | Views all serve same goal — no interference |
 | MSE loss creates saturation | MSE behaves same as CE in our setup |
 | Gradient flow creates competition | Gradient flow behaves same as SGD |
 | s_max emerges from dynamics | No saturation emerges — all views learned |
@@ -205,7 +215,7 @@ Our **multi-view classification** setup may simply not create the conditions for
 | Capacity limits force selection | Networks use all capacity for all views |
 | KD distributes gradients evenly | KD gradients weaker, not pathway-specific |
 
-**Key insight**: The theory may be correct for multi-task learning but doesn't apply to multi-view single-task classification.
+**Key insight (confirmed by Jarvis 2025)**: The neural race theory is correct for multi-task learning but does not apply to single-task multi-view classification. Our experiments are correct — the theoretical framing was misapplied.
 
 ---
 
@@ -226,7 +236,24 @@ Our **multi-view classification** setup may simply not create the conditions for
 - Weaker contribution than original thesis
 - Less explanatory power for "why KD works"
 
-### Option B: Find Emergent Competition
+### Option B: Test Multi-Task Structure (NEW - RECOMMENDED)
+
+**Approach**: Modify experiments to create actual multi-task competition:
+- View 1 predicts Task A (e.g., color classification)
+- View 2 predicts Task B (e.g., shape classification)
+- Tasks share network capacity, creating interference
+
+**Pros**:
+- Directly tests the theory under correct conditions
+- Could validate neural race in proper multi-task setting
+- Clarifies when KD helps vs doesn't help
+- Preserves original paper direction with modified framing
+
+**Cons**:
+- Requires new experimental setup
+- May find that KD still doesn't break competition (same finding, different context)
+
+### Option C: Find Other Emergent Competition
 
 **Approach**: Look for architectures/domains where competition naturally emerges:
 - Transformers with limited attention heads
@@ -243,7 +270,7 @@ Our **multi-view classification** setup may simply not create the conditions for
 - Significant additional work
 - Different domain may not generalize
 
-### Option C: Reframe Contribution
+### Option D: Reframe Contribution
 
 **Approach**: Pivot from "explaining KD" to "controlled study of pathway competition":
 - Present explicit competition as a design choice
@@ -263,33 +290,46 @@ Our **multi-view classification** setup may simply not create the conditions for
 
 ## Recommendation
 
-**Suggested path**: Option A (Revise Theory) with elements of Option C (Reframe)
+**Suggested path**: Option B (Test Multi-Task Structure) as primary, with Option A (Revise) as fallback
 
 **Rationale**:
-1. The finding that "competition requires explicit design" is itself interesting and publishable
-2. The KD results (worse under competition) are surprising and worth reporting
-3. We have solid experimental infrastructure and reproducible results
-4. Reframing can be done relatively quickly vs. finding emergent competition
+1. The Jarvis paper confirms our hypothesis: neural race requires multi-task structure
+2. Testing multi-task setup would properly validate (or invalidate) the theory
+3. If KD breaks competition in multi-task setting → original thesis salvaged
+4. If KD still doesn't break competition → stronger negative result with proper framing
+5. Either outcome is publishable with clear contribution
 
-**Proposed narrative**:
-- "We investigated whether neural race dynamics explain KD's effectiveness"
-- "We found that winner-take-all requires explicit competition mechanisms"
-- "Surprisingly, KD is MORE susceptible to competition, not less"
-- "This suggests KD's benefits come from a different mechanism than gradient distribution"
+**Proposed narrative (revised)**:
+- "We investigated neural race dynamics in multi-view learning"
+- "Single-task multi-view classification does NOT exhibit neural race (confirmed by Jarvis 2025)"
+- "Multi-task multi-view setups DO exhibit competition (to be tested)"
+- "KD's role depends on task structure: transfers knowledge without competition, but doesn't break competition when present"
+
+**Quick win**: Before full multi-task experiments, we could test a simple variant:
+- View 1 → Class 0-4, View 2 → Class 5-9 (different views predict different class subsets)
+- This creates task interference without full redesign
 
 ---
 
 ## Questions for Advisor
 
-1. **Direction**: Which option (A, B, or C) should we pursue?
+1. **Direction**: Should we pursue Option B (multi-task experiments) to properly test the theory, or accept current findings and pivot (Option A/D)?
 
-2. **Scope**: Should we attempt to find emergent competition, or accept the current findings?
+2. **Multi-task design**: If pursuing Option B, what multi-task structure best matches the Saxe/Jarvis framework?
+   - Separate output heads per task?
+   - Shared output with task-specific labels?
+   - Different views predict different class subsets?
 
-3. **Timeline**: Given NeurIPS deadline (~May 22), is there time to pivot significantly?
+3. **Timeline**: Given NeurIPS deadline (~May 22), is there time for new multi-task experiments?
 
-4. **Theorem revision**: How should we modify Theorem 3 given the contradicting results?
+4. **Framing**: How do we frame the single-task findings?
+   - "Neural race doesn't apply to single-task" (negative result)
+   - "Conditions for pathway competition" (characterization)
+   - "Task structure determines competition" (general principle)
 
-5. **Contribution framing**: Is "competition requires explicit design" a strong enough contribution?
+5. **Jarvis citation**: Should we heavily cite the Jarvis 2025 paper as theoretical grounding for the task structure distinction?
+
+6. **KD findings**: The KD-under-competition results are surprising regardless of task structure. Should this be a separate contribution?
 
 ---
 
@@ -307,13 +347,21 @@ All code tested and results reproducible.
 
 ---
 
-## Appendix: Reference Paper
+## Appendix: Reference Papers
 
-**Saxe et al. 2022** - "The Neural Race Reduction: Dynamics of Abstraction in Gated Networks" (ICML 2022, arXiv:2207.10430)
+### Saxe et al. 2022
+"The Neural Race Reduction: Dynamics of Abstraction in Gated Networks" (ICML 2022, arXiv:2207.10430)
 
-Summary available at: `reading_stack/summaries/PAPER-001-saxe-2022.md`
+Summary: `reading_stack/summaries/PAPER-001-saxe-2022.md`
 
-Key takeaway: The theory applies to Gated Deep Linear Networks with specific input-output correlation structures. Our multi-view orthogonal slot setup may not create the conditions for neural race dynamics.
+Key takeaway: Neural race dynamics require MSE loss + gradient flow. The s_max saturation emerges from Lotka-Volterra competitive dynamics.
+
+### Jarvis et al. 2025 (CRITICAL)
+"Make Haste Slowly: A Theory of Emergent Structured Mixed Selectivity in Feature Learning ReLU Networks" (ICLR 2025, arXiv:2503.06181)
+
+Summary: `reading_stack/summaries/PAPER-002-jarvis-2025.md`
+
+Key takeaway: **Neural race applies to multi-task learning, not single-task multi-view classification.** Competition requires task interference — views serving the same goal don't compete. This explains our zero seed variance finding.
 
 ---
 
