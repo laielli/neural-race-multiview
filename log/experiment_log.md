@@ -641,6 +641,57 @@ GatedDLN with explicit pathway separation shows race dynamics in SVD space, vali
    - [ ] Test if KD from multi-view teachers preserves pathway diversity
    - [ ] Compare pathway survival rates: hard labels vs KD
 
+---
+
+## KD + GatedDLN Experiment (2026-01-13)
+
+### Goal
+
+Test Theorem 3 with GatedDLN architecture: Does KD preserve pathway diversity?
+
+### Setup
+
+- GatedDLN architecture (M=4 pathways, diagonal gating)
+- Structured regression task with target SVs [10, 5, 2, 1]
+- 5 teachers, temperature=4.0
+- MSE loss, gradient flow, 1000 epochs
+
+### Results
+
+| Metric | Hard Labels | KD |
+|--------|-------------|-----|
+| Final Dominance | 0.505 | 0.502 |
+| Pathway Strengths | [10.4, 5.7, 2.7, 1.8] | [3.1, 1.6, 0.8, 0.6] |
+| Relative Proportions | [0.50, 0.27, 0.13, 0.09] | [0.50, 0.26, 0.13, 0.10] |
+
+### Key Finding: KD Does NOT Break Race Dynamics
+
+**Both hard labels and KD converge to the same dominance (~0.50)**
+
+- Race dynamics confirmed: dominance goes 0.25 → 0.50 during training
+- KD learns the same relative pathway structure as hard labels
+- KD just has lower absolute strengths (targets are teacher outputs, not raw Y)
+
+### Implications for Theorem 3
+
+**The prediction that KD preserves pathway diversity is NOT supported.**
+
+Possible explanations:
+1. KD distributes gradients, but doesn't change the underlying race dynamics
+2. The race is determined by data correlations (target SVs), not training method
+3. KD from an ensemble that has already "raced" transfers the race outcome, not diversity
+
+### Conclusion
+
+In GatedDLN with structured regression:
+- Race dynamics ARE happening (dominance 0.25 → 0.50)
+- KD does NOT prevent winner-take-all
+- Both training methods converge to proportions matching data correlations
+
+This is a **negative result** for Theorem 3 as originally stated.
+
+---
+
 ### Paper Direction Decision
 
 **Awaiting advisor guidance on scope**:

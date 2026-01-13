@@ -577,6 +577,247 @@ def train_gated_multiview(
     return history
 
 
+def train_gated_kd(
+    student,
+    teachers,
+    X,
+    Y,
+    epochs: int = 500,
+    temperature: float = 4.0,
+    lr: float = 0.02,
+    log_interval: int = 10,
+    track_svd: bool = True,
+    verbose: bool = True,
+    use_mse: bool = True  # Use MSE to teacher outputs (better for regression)
+):
+    """
+    Train GatedDLN student via knowledge distillation from teacher ensemble.
+
+    Uses soft targets from teacher ensemble to guide student training.
+    The hypothesis (Theorem 3): KD should distribute gradients to preserve
+    multiple pathways, preventing winner-take-all dynamics.
+
+    Args:
+        student: GatedDLN student model
+        teachers: List of GatedDLN teacher models
+        X: Input data, shape (N, d) or list of (N, d_input) per pathway
+        Y: Target data, shape (N, d_output) - used for teacher targets
+        epochs: Number of training epochs
+        temperature: Softmax temperature for distillation (ignored if use_mse=True)
+        lr: Learning rate
+        log_interval: How often to log metrics
+        track_svd: If True, track singular values during training
+        verbose: Whether to print progress
+        use_mse: If True, use MSE to teacher outputs (better for regression)
+
+    Returns:
+        dict: Training history including loss and SVD history
+    """
+    # Gradient flow: SGD with no momentum
+    optimizer = torch.optim.SGD(student.parameters(), lr=lr, momentum=0.0)
+    mse_loss = nn.MSELoss()
+
+    history = {
+        'loss': [],
+        'epochs_logged': [],
+        'pathway_strengths': [],
+        'dominance': []
+    }
+
+    if track_svd:
+        history['svd'] = {
+            'encoders': [],
+            'hidden': [],
+            'decoders': []
+        }
+
+    # Set teachers to eval mode
+    for t in teachers:
+        t.eval()
+
+    iterator = range(epochs)
+    if verbose:
+        iterator = tqdm(iterator, desc="Training GatedDLN (KD)")
+
+    for epoch in iterator:
+        student.train()
+        optimizer.zero_grad()
+
+        # Get soft targets from teacher ensemble
+        with torch.no_grad():
+            # Each teacher produces outputs for each gated pathway
+            # Average the outputs across teachers
+            teacher_outputs = []
+            for t in teachers:
+                t_outs = t(X, y_target=None)  # Get outputs, not loss
+                if isinstance(t_outs, list):
+                    # Average across pathways within each teacher
+                    t_out = torch.stack(t_outs).mean(dim=0)
+                else:
+                    t_out = t_outs
+                teacher_outputs.append(t_out)
+
+            # Ensemble average - these are the soft targets
+            soft_targets = torch.stack(teacher_outputs).mean(dim=0)
+
+        # Compute loss for student by driving each pathway toward teacher ensemble target
+        # This mimics how the original training computes loss for each gated pathway
+        if use_mse:
+            # Compute loss through gated pathways, same as train_gated_dln
+            # but using teacher ensemble outputs as targets
+            loss = student(X, soft_targets)  # Uses model's internal gated loss computation
+        else:
+            # Get student outputs for KL divergence
+            student_outputs = student(X, y_target=None)
+            if isinstance(student_outputs, list):
+                student_out = torch.stack(student_outputs).mean(dim=0)
+            else:
+                student_out = student_outputs
+
+            # KL divergence with temperature (for classification)
+            soft_targets_prob = F.softmax(soft_targets / temperature, dim=-1)
+            student_log_probs = F.log_softmax(student_out / temperature, dim=-1)
+            loss = F.kl_div(student_log_probs, soft_targets_prob, reduction='batchmean')
+            loss = loss * (temperature ** 2)
+
+        loss.backward()
+        optimizer.step()
+
+        # Logging
+        if epoch % log_interval == 0 or epoch == epochs - 1:
+            history['loss'].append(loss.item())
+            history['epochs_logged'].append(epoch)
+            history['pathway_strengths'].append(student.get_all_pathway_strengths())
+            history['dominance'].append(student.compute_dominance())
+
+            if track_svd:
+                svs = student.get_singular_values()
+                history['svd']['encoders'].append(svs['encoders'])
+                history['svd']['hidden'].append(svs['hidden'])
+                history['svd']['decoders'].append(svs['decoders'])
+
+            if verbose:
+                dom = history['dominance'][-1]
+                iterator.set_postfix(loss=f"{loss.item():.4f}", dom=f"{dom:.3f}")
+
+    return history
+
+
+def train_gated_multiview_kd(
+    student,
+    teachers,
+    dataset,
+    epochs: int = 500,
+    temperature: float = 4.0,
+    lr: float = 0.02,
+    log_interval: int = 10,
+    track_svd: bool = True,
+    verbose: bool = True
+):
+    """
+    Train GatedMultiViewNet student via KD from teacher ensemble.
+
+    Args:
+        student: GatedMultiViewNet student model
+        teachers: List of GatedMultiViewNet teacher models
+        dataset: MultiViewDataset instance
+        epochs: Number of training epochs
+        temperature: KD temperature
+        lr: Learning rate
+        log_interval: How often to log metrics
+        track_svd: If True, track singular values
+        verbose: Whether to print progress
+
+    Returns:
+        dict: Training history
+    """
+    # Get data
+    X, Y = dataset.get_tensors()
+
+    # Gradient flow: SGD with no momentum
+    optimizer = torch.optim.SGD(student.parameters(), lr=lr, momentum=0.0)
+
+    history = {
+        'loss': [],
+        'accuracy': [],
+        'epochs_logged': [],
+        'pathway_strengths': [],
+        'dominance': [],
+        'view_coverage': []
+    }
+
+    if track_svd:
+        history['svd'] = {
+            'encoders': [],
+            'hidden': [],
+            'decoders': []
+        }
+
+    # Set teachers to eval mode
+    for t in teachers:
+        t.eval()
+
+    iterator = range(epochs)
+    if verbose:
+        iterator = tqdm(iterator, desc="Training GatedMultiView (KD)")
+
+    for epoch in iterator:
+        student.train()
+        optimizer.zero_grad()
+
+        # Get soft targets from teacher ensemble
+        with torch.no_grad():
+            teacher_logits = []
+            for t in teachers:
+                t_logits = t.forward_multiview(X)
+                teacher_logits.append(t_logits)
+
+            # Ensemble average logits
+            ensemble_logits = torch.stack(teacher_logits).mean(dim=0)
+            soft_targets = F.softmax(ensemble_logits / temperature, dim=-1)
+
+        # Student forward pass
+        student_logits = student.forward_multiview(X)
+        student_log_probs = F.log_softmax(student_logits / temperature, dim=-1)
+
+        # KD loss (KL divergence)
+        loss = F.kl_div(student_log_probs, soft_targets, reduction='batchmean')
+        loss = loss * (temperature ** 2)
+
+        loss.backward()
+        optimizer.step()
+
+        # Logging
+        if epoch % log_interval == 0 or epoch == epochs - 1:
+            student.eval()
+
+            with torch.no_grad():
+                logits = student.forward_multiview(X)
+                acc = (logits.argmax(dim=1) == Y).float().mean().item()
+
+            history['loss'].append(loss.item())
+            history['accuracy'].append(acc)
+            history['epochs_logged'].append(epoch)
+            history['pathway_strengths'].append(student.get_all_pathway_strengths())
+            history['dominance'].append(student.compute_dominance())
+
+            # Measure view coverage
+            cov = student.measure_view_coverage(dataset, threshold=0.1)
+            history['view_coverage'].append(cov)
+
+            if track_svd:
+                svs = student.get_singular_values()
+                history['svd']['encoders'].append(svs['encoders'])
+                history['svd']['hidden'].append(svs['hidden'])
+                history['svd']['decoders'].append(svs['decoders'])
+
+            if verbose:
+                dom = history['dominance'][-1]
+                iterator.set_postfix(loss=f"{loss.item():.4f}", acc=f"{acc:.3f}", dom=f"{dom:.3f}")
+
+    return history
+
+
 def train_teachers(
     dataset,
     num_teachers: int = 5,
