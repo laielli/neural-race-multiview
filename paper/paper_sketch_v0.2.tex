@@ -82,6 +82,13 @@ To achieve student representations more balanced than hard labels, we must: (1) 
     \item A recipe for achieving balanced representations via forced diversity and inverse weighting, with characterization of the unavoidable speed trade-off
 \end{itemize}
 
+\begin{figure}[t]
+\centering
+\includegraphics[width=\textwidth]{figures/fig7_summary_overview.png}
+\caption{\textbf{Overview of three core findings.} (Left) Finding 1: All teachers converge to identical representations---random seeds don't create diversity. (Center) Finding 2: Hierarchical structure enables 5.3$\times$ speedup. (Right) Finding 3: Balance-speed trade-off---achieving higher effective rank requires sacrificing learning speed.}
+\label{fig:overview}
+\end{figure}
+
 %==============================================================================
 % 2. BACKGROUND
 %==============================================================================
@@ -163,26 +170,14 @@ Multi-view theory assumes that different random seeds lead to different views be
 
 We train 5 teachers with different random seeds using cross-entropy loss. \textbf{All converge to identical representations}:
 
-\begin{table}[h]
+\begin{figure}[h]
 \centering
-\caption{Five CE teachers with different seeds converge to identical view contributions.}
-\label{tab:nodiversity}
-\begin{tabular}{@{}lccc@{}}
-\toprule
-Teacher & Effective Rank & View 0 Contribution & View 0 Std \\
-\midrule
-Teacher 0 & 3.415 & 0.542 & --- \\
-Teacher 1 & 3.418 & 0.541 & --- \\
-Teacher 2 & 3.413 & 0.542 & --- \\
-Teacher 3 & 3.412 & 0.543 & --- \\
-Teacher 4 & 3.415 & 0.542 & --- \\
-\midrule
-\textbf{Mean $\pm$ Std} & 3.41 $\pm$ 0.002 & 0.542 $\pm$ \textbf{0.001} & --- \\
-\bottomrule
-\end{tabular}
-\end{table}
+\includegraphics[width=0.95\textwidth]{figures/fig1_teacher_homogeneity.png}
+\caption{\textbf{Finding 1: All CE teachers converge to identical representations.} (a) View 0 contribution is nearly identical across all 5 teachers (std = 0.001). (b) Effective rank is also identical. Random seeds do not create diversity in our GDLN setting.}
+\label{fig:teacher_homogeneity}
+\end{figure}
 
-The standard deviation of View 0 contribution across teachers is \textbf{0.001}---effectively zero. All teachers learn the same WTA representation favoring View 0.
+The standard deviation of View 0 contribution across teachers is \textbf{0.001}---effectively zero (Figure~\ref{fig:teacher_homogeneity}). All teachers learn the same WTA representation favoring View 0.
 
 \subsection{Consequence: KD Transfers WTA}
 
@@ -203,6 +198,13 @@ KD (CE teachers) & 3.75 & 0.49 & 100\% \\
 \end{table}
 
 KD students have \textit{lower} effective rank (3.75 vs.\ 4.73) and \textit{higher} V0 dominance (0.49 vs.\ 0.33) than hard-label students. \textbf{KD made the student more WTA, not less.}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.85\textwidth]{figures/fig4_kd_transfer_mechanism.png}
+\caption{\textbf{KD transfers teacher representation to student.} The KD student's view contributions closely match the teacher average, not the hard-label baseline. The student inherits the teacher's V0 bias.}
+\label{fig:transfer}
+\end{figure}
 
 \subsection{The Corrected Understanding}
 
@@ -241,23 +243,14 @@ The teacher has \textit{richer knowledge} than the student needs.
 
 \subsection{Result: 5.3$\times$ Learning Speedup}
 
-\begin{table}[h]
+\begin{figure}[h]
 \centering
-\caption{Hierarchical structure enables 5.3$\times$ learning speedup via KD.}
-\label{tab:hierarchical}
-\begin{tabular}{@{}lccc@{}}
-\toprule
-Metric & Hard Labels & KD & Difference \\
-\midrule
-\textbf{Epochs to 90\% acc} & 160 & \textbf{30} & \textbf{5.3$\times$ faster} \\
-Final accuracy & 99.998\% & 100\% & +0.002\% \\
-Effective rank & 4.74 & 3.75 & $-$0.99 \\
-View 0 contribution & 0.33 & 0.49 & +0.16 \\
-\bottomrule
-\end{tabular}
-\end{table}
+\includegraphics[width=0.95\textwidth]{figures/fig2_hierarchical_acceleration.png}
+\caption{\textbf{Finding 2: Hierarchical structure enables 5.3$\times$ speedup.} (a) Learning curves showing KD reaches 90\% accuracy much faster. (b) Direct comparison: KD reaches 90\% in 30 epochs vs.\ 160 for hard labels.}
+\label{fig:hierarchical}
+\end{figure}
 
-KD achieves 90\% accuracy in \textbf{30 epochs} vs.\ 160 for hard labels---a \textbf{5.3$\times$ speedup}.
+KD achieves 90\% accuracy in \textbf{30 epochs} vs.\ 160 for hard labels---a \textbf{5.3$\times$ speedup} (Figure~\ref{fig:hierarchical}).
 
 \subsection{Mechanism: Soft Labels Encode Inter-Class Similarity}
 
@@ -276,6 +269,13 @@ When the teacher sees a ``husky'' (fine class), it places:
 \end{itemize}
 
 This encodes: ``this is a dog, but it looks somewhat like a wolf''---information that hard labels \textit{cannot} provide.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/fig6_soft_label_information.png}
+\caption{\textbf{Soft labels encode inter-class similarity.} (a) Soft label entropy distribution shows meaningful spread (mean 1.59 vs.\ max 2.30), not peaked like hard labels. (b) The teacher places 17.7\% probability mass on same-superclass alternatives, encoding ``this dog looks like a wolf.''}
+\label{fig:soft_labels}
+\end{figure}
 
 \subsection{The Insight: Brakes vs.\ Gas}
 
@@ -309,24 +309,14 @@ Can we achieve student representations that are \textit{more balanced} than hard
 
 Since random seeds don't create diversity, we force it by training \textbf{single-view teachers}---each teacher only sees one view (others masked to zero):
 
-\begin{table}[h]
+\begin{figure}[h]
 \centering
-\caption{Single-view teachers have verified diagonal dominance.}
-\label{tab:singleview}
-\begin{tabular}{@{}lccc@{}}
-\toprule
-Teacher & Sees Only & Accuracy & Dominant View \\
-\midrule
-Teacher 0 & View 0 & 99.9\% & V0 = 0.874 \\
-Teacher 1 & View 1 & 84.3\% & V1 = 0.862 \\
-Teacher 2 & View 2 & 35.8\% & V2 = 0.564 \\
-Teacher 3 & View 3 & 21.2\% & V3 = 0.308 \\
-Teacher 4 & View 4 & 10.1\% & V4 = 0.236 \\
-\bottomrule
-\end{tabular}
-\end{table}
+\includegraphics[width=0.6\textwidth]{figures/fig5_forced_diversity.png}
+\caption{\textbf{Forced diversity via single-view teachers.} Each teacher only sees one view (others masked). The resulting view contribution matrix shows diagonal dominance: each teacher has highest contribution on its designated view.}
+\label{fig:forced_diversity}
+\end{figure}
 
-Each teacher has highest contribution on its designated view. \textbf{Diagonal dominance verified.}
+Each teacher has highest contribution on its designated view (Figure~\ref{fig:forced_diversity}). \textbf{Diagonal dominance verified.}
 
 \subsection{Step 2: The Weighting Problem}
 
@@ -376,26 +366,20 @@ KD (uniform) & 4.03 & 0.442 & [0.44, 0.26, 0.13, 0.09, 0.08] \\
 
 \subsection{The Trade-off: Balance vs.\ Speed}
 
-\begin{table}[h]
+\begin{figure}[h]
 \centering
-\caption{Fundamental trade-off: balance requires sacrificing speed.}
-\label{tab:tradeoff}
-\begin{tabular}{@{}lccc@{}}
-\toprule
-Method & Effective Rank & Epochs to 90\% & Speed vs.\ Hard \\
-\midrule
-Hard Labels & 4.73 & 150 & 1.0$\times$ \\
-KD (uniform) & 4.03 & \textbf{90} & \textbf{1.7$\times$ faster} \\
-KD (inv signal) & \textbf{4.95} & 250 & \textbf{0.6$\times$ (slower)} \\
-\bottomrule
-\end{tabular}
-\end{table}
+\includegraphics[width=0.95\textwidth]{figures/fig3_balance_speed_tradeoff.png}
+\caption{\textbf{Finding 3: Fundamental balance-speed trade-off.} (a) Scatter plot showing the Pareto frontier: uniform weighting is fast but WTA; inverse weighting achieves best balance but is slowest. (b) Bar comparison of effective rank (green, higher=better) and epochs to 90\% (red, lower=better).}
+\label{fig:tradeoff}
+\end{figure}
 
 \begin{itemize}
     \item \textbf{Uniform weighting}: Fast (90 epochs, 1.7$\times$ speedup) but creates more WTA (rank 4.03)
     \item \textbf{Inverse signal weighting}: Highest rank (4.95) but slowest (250 epochs, 0.6$\times$)
     \item \textbf{Hard labels}: Middle ground (150 epochs, rank 4.73)
 \end{itemize}
+
+Figure~\ref{fig:tradeoff} illustrates this fundamental trade-off.
 
 \subsection{Theoretical Grounding: Make Haste Slowly}
 
