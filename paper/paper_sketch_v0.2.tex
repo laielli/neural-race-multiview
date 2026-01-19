@@ -1,0 +1,629 @@
+\documentclass{article}
+
+% Use NeurIPS 2015 style (can be updated to newer format later)
+\usepackage{nips15submit_e}
+
+% Packages
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{xcolor}
+
+% Theorem environments
+\newtheorem{theorem}{Theorem}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{assumption}{Assumption}
+\newtheorem{remark}{Remark}
+
+% Custom commands
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Prob}{\mathbb{P}}
+\newcommand{\cD}{\mathcal{D}}
+\newcommand{\cL}{\mathcal{L}}
+\newcommand{\cM}{\mathcal{M}}
+\newcommand{\cS}{\mathcal{S}}
+
+% Draft markers
+\newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
+\newcommand{\placeholder}[1]{\textcolor{blue}{[PLACEHOLDER: #1]}}
+\newcommand{\citationneeded}{\textcolor{orange}{[Citation needed]}}
+
+\title{A Mechanistic Account of Knowledge Distillation\\Through the Lens of Neural Race Dynamics}
+
+\author{
+[Author Names] \\
+[Affiliations] \\
+\texttt{[emails]}
+}
+
+\nipsfinalcopy % Uncomment for camera-ready version
+
+\begin{document}
+
+\maketitle
+
+%==============================================================================
+% ABSTRACT
+%==============================================================================
+\begin{abstract}
+Knowledge distillation (KD) enables student networks to learn from teacher soft labels, but the mechanisms underlying its success remain poorly understood. We provide a mechanistic account of KD through the lens of neural race dynamics in gated deep linear networks (GDLNs). Our analysis reveals three key findings: (1) \textbf{KD is a transfer mechanism}---students inherit whatever representation the teacher ensemble collectively learned, not an inherently more balanced one; (2) \textbf{Soft labels accelerate learning when teachers have richer knowledge}---with hierarchical class structure, KD provides 5.3$\times$ speedup by encoding inter-class similarity that hard labels cannot convey; (3) \textbf{Achieving balanced representations requires explicit diversity and proper weighting}---random seeds do not create teacher diversity in our setting, but forced single-view teachers with inverse signal weighting achieve higher effective rank than hard labels (4.95 vs.\ 4.73), at the cost of slower learning. This balance-speed trade-off is theoretically grounded: learning speed is proportional to singular values, so diluting high-$\sigma$ signal to achieve balance necessarily slows convergence. Our work connects multi-view theory, neural race reduction, and the ``Make Haste Slowly'' principle to provide a unified understanding of when and why KD helps.
+\end{abstract}
+
+%==============================================================================
+% 1. INTRODUCTION
+%==============================================================================
+\section{Introduction}
+
+Knowledge distillation (KD) has become a cornerstone technique in deep learning, enabling smaller student networks to match or exceed the performance of larger teachers~\cite{hinton2015distilling}. Yet the mechanisms underlying its success remain surprisingly unclear. When does KD help? What information do soft labels provide that hard labels cannot?
+
+Recent theoretical work offers partial answers. Allen-Zhu \& Li~\cite{allen2023towards} propose that networks converge to using single ``views'' (feature subsets) per class, while teacher ensembles cover multiple views---KD then transfers this broader coverage. The neural race reduction~\cite{saxe2022neural} shows that learning dynamics in gated networks follow winner-take-all races where strong pathways dominate. The ``Make Haste Slowly'' principle~\cite{jarvis2025makehaste} reveals that learning speed is proportional to singular values, creating fundamental trade-offs between speed and representation structure.
+
+We unify these perspectives to provide a mechanistic account of KD. Our experiments on synthetic multi-view data in gated deep linear networks (GDLNs) reveal findings that refine and sometimes contradict prior assumptions:
+
+\paragraph{Finding 1: KD is a Transfer Mechanism, Not Inherently WTA-Breaking.}
+Contrary to the view that KD ``breaks'' winner-take-all (WTA) dynamics, we find that KD \textit{transfers} the teacher's representation to the student. If all teachers converge to the same WTA solution (which we observe with cross-entropy training and random seeds), KD transfers this WTA to the student. The mechanism is transfer, not inherent balancing.
+
+\paragraph{Finding 2: Soft Labels Accelerate Learning Under Hierarchical Structure.}
+When teachers have richer knowledge than students (finer-grained labels), soft labels provide \textit{additional} learning signal---a 5.3$\times$ speedup. The teacher's confusion between similar fine-grained classes encodes inter-class similarity that hard labels cannot convey. This is soft labels as ``gas,'' not just ``brakes.''
+
+\paragraph{Finding 3: Balance Requires Diversity + Weighting, With Speed Trade-off.}
+To achieve student representations more balanced than hard labels, we must: (1) force teacher diversity explicitly (single-view training), and (2) weight teachers inversely to their signal strength. This achieves effective rank 4.95 vs.\ 4.73 for hard labels---but at 1.7$\times$ slower learning. The trade-off is fundamental: per ``Make Haste Slowly,'' learning speed $\propto$ singular values, so diluting high-$\sigma$ signal for balance necessarily slows convergence.
+
+\paragraph{Contributions.} We provide:
+\begin{itemize}
+    \item A unified framework connecting multi-view theory, neural race dynamics, and the singular value-speed relationship
+    \item Experimental evidence that KD is a transfer mechanism, with implications for when it helps vs.\ hurts
+    \item Identification of hierarchical structure as a key condition for KD acceleration
+    \item A recipe for achieving balanced representations via forced diversity and inverse weighting, with characterization of the unavoidable speed trade-off
+\end{itemize}
+
+%==============================================================================
+% 2. BACKGROUND
+%==============================================================================
+\section{Background}
+\label{sec:background}
+
+\subsection{Multi-View Theory}
+\label{sec:multiview}
+
+Allen-Zhu \& Li~\cite{allen2023towards} model data as containing $M$ ``views'' per class---distinct feature subsets each sufficient for classification. They show: (1) networks trained with hard labels converge to using $\approx 1$ view per class, (2) different random seeds lead to different views, creating ensemble diversity, and (3) KD transfers multi-view coverage from teacher to student.
+
+\paragraph{Open Questions.} Multi-view theory describes \textit{what} happens but not \textit{why}. What determines which view wins? Does ensemble diversity emerge naturally? What is the mechanism by which soft labels transfer coverage?
+
+\subsection{Neural Race Reduction}
+\label{sec:race_background}
+
+Saxe et al.~\cite{saxe2022neural} show that ReLU networks can be analyzed as \emph{gated deep linear networks} (GDLNs), where different gating patterns define computational \emph{pathways} that race to explain the data. Under gradient descent, pathway strengths evolve according to winner-take-all dynamics: the pathway with highest initial correlation with the target grows fastest and dominates.
+
+\subsection{Make Haste Slowly: The Speed-Structure Trade-off}
+\label{sec:makehaste}
+
+Jarvis et al.~\cite{jarvis2025makehaste} establish a deep connection between ReLU networks and GDLNs, showing that learning speed is governed by singular values:
+\begin{equation}
+    \text{Learning speed for mode } \alpha \propto \sigma_\alpha
+\end{equation}
+where $\sigma_\alpha$ are singular values of the input-output correlation. Networks naturally adopt structures that maximize learning speed given feature learning constraints---high-$\sigma$ pathways ``win the neural race.''
+
+\paragraph{Key Implication.} Fast learning inherently favors high-$\sigma$ pathways (creating WTA). Achieving balanced representations requires suppressing high-$\sigma$ signal, which necessarily slows learning. \textbf{You cannot have both maximum speed and maximum balance.}
+
+%==============================================================================
+% 3. SETUP
+%==============================================================================
+\section{Experimental Setup}
+\label{sec:setup}
+
+\subsection{Multi-View Data Generation}
+
+We construct synthetic data with $K$ classes and $M$ views per class. Each view occupies a disjoint coordinate subspace (ensuring orthogonality). Crucially, we introduce \textbf{asymmetric signal strengths} across views:
+\begin{equation}
+    \text{signal}_m = \rho^m, \quad m \in \{0, 1, \ldots, M-1\}
+\end{equation}
+with decay factor $\rho = 0.5$. This creates correlation strengths $\sigma_1(\Sigma_m) \propto \text{signal}_m$, establishing a clear hierarchy where View 0 has the strongest signal.
+
+\paragraph{Default Configuration.}
+\begin{itemize}
+    \item $K = 10$ classes, $M = 5$ views
+    \item Input dimension $d = 250$ (50 per view)
+    \item Signal strengths: $[1.0, 0.5, 0.25, 0.125, 0.0625]$
+    \item $n = 10{,}000$ training samples
+\end{itemize}
+
+\subsection{Network Architecture}
+
+We use 2-layer linear networks matching the GDLN framework:
+\begin{equation}
+    f(x) = W_2 W_1 x
+\end{equation}
+with hidden dimension 128, trained via SGD with learning rate 0.1 for 1000 epochs.
+
+\subsection{Metrics}
+
+\paragraph{View Contribution.} For each view $m$, we measure its contribution to the learned representation via the Frobenius norm of input layer weights in that view's coordinate subspace, normalized to sum to 1.
+
+\paragraph{Effective Rank.} We compute effective rank as $\exp(H)$ where $H$ is the entropy of normalized view contributions. Effective rank 1 = single view dominates; effective rank $M$ = all views equal.
+
+\paragraph{Dominant View (V0).} The contribution of View 0 (strongest signal), measuring degree of WTA.
+
+%==============================================================================
+% 4. FINDING 1: KD IS A TRANSFER MECHANISM
+%==============================================================================
+\section{Finding 1: KD Transfers Teacher Representations}
+\label{sec:transfer}
+
+\subsection{The Assumption: Ensemble Diversity}
+
+Multi-view theory assumes that different random seeds lead to different views being learned, creating ensemble diversity. KD then combines these diverse perspectives.
+
+\subsection{The Reality: No Natural Diversity}
+
+We train 5 teachers with different random seeds using cross-entropy loss. \textbf{All converge to identical representations}:
+
+\begin{table}[h]
+\centering
+\caption{Five CE teachers with different seeds converge to identical view contributions.}
+\label{tab:nodiversity}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Teacher & Effective Rank & View 0 Contribution & View 0 Std \\
+\midrule
+Teacher 0 & 3.415 & 0.542 & --- \\
+Teacher 1 & 3.418 & 0.541 & --- \\
+Teacher 2 & 3.413 & 0.542 & --- \\
+Teacher 3 & 3.412 & 0.543 & --- \\
+Teacher 4 & 3.415 & 0.542 & --- \\
+\midrule
+\textbf{Mean $\pm$ Std} & 3.41 $\pm$ 0.002 & 0.542 $\pm$ \textbf{0.001} & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The standard deviation of View 0 contribution across teachers is \textbf{0.001}---effectively zero. All teachers learn the same WTA representation favoring View 0.
+
+\subsection{Consequence: KD Transfers WTA}
+
+When we distill from this homogeneous ensemble:
+
+\begin{table}[h]
+\centering
+\caption{KD transfers teacher's WTA representation to student.}
+\label{tab:transfer}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Training & Effective Rank & View 0 & Accuracy \\
+\midrule
+Hard Labels & 4.73 & 0.33 & 100\% \\
+KD (CE teachers) & 3.75 & 0.49 & 100\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+KD students have \textit{lower} effective rank (3.75 vs.\ 4.73) and \textit{higher} V0 dominance (0.49 vs.\ 0.33) than hard-label students. \textbf{KD made the student more WTA, not less.}
+
+\subsection{The Corrected Understanding}
+
+\begin{quote}
+\textbf{Original claim:} ``KD breaks winner-take-all dynamics.''
+
+\textbf{Corrected claim:} ``KD transfers the teacher ensemble's collective representation to the student.''
+\end{quote}
+
+If teachers are diverse $\rightarrow$ KD transfers diversity. If teachers are homogeneous $\rightarrow$ KD transfers homogeneity. KD is a \textit{transfer mechanism}, not an inherent WTA-breaker.
+
+\paragraph{Caveat: Allen-Zhu Discrepancy.} Our finding that all teachers converge to identical representations may be specific to our GDLN setting. Allen-Zhu et al.\ observe diversity in deep nonlinear networks on harder tasks. The discrepancy likely stems from: (1) our linear networks having simpler loss landscapes, (2) our task being ``easy'' with one dominant solution, or (3) our decaying signal strengths creating strong implicit bias toward View 0.
+
+%==============================================================================
+% 5. FINDING 2: HIERARCHICAL ACCELERATION
+%==============================================================================
+\section{Finding 2: Soft Labels Accelerate Under Hierarchical Structure}
+\label{sec:hierarchical}
+
+\subsection{The Question: When Do Soft Labels Provide Additional Signal?}
+
+In flat-class settings, we observe that soft labels primarily act as ``brakes''---they suppress dominant pathways, creating balance but slowing learning. When might soft labels provide \textit{additional} learning signal?
+
+\subsection{Setup: Hierarchical Class Structure}
+
+We create a hierarchical dataset:
+\begin{itemize}
+    \item $K_{\text{super}} = 10$ superclasses
+    \item $K_{\text{sub}} = 3$ subclasses per superclass (30 fine classes total)
+    \item \textbf{Teacher} trained on 30-class problem (cross-entropy)
+    \item \textbf{Student} trained on 10-class problem
+    \item Subclass similarity = 0.5 (subclasses share 50\% of prototype with superclass)
+\end{itemize}
+
+The teacher has \textit{richer knowledge} than the student needs.
+
+\subsection{Result: 5.3$\times$ Learning Speedup}
+
+\begin{table}[h]
+\centering
+\caption{Hierarchical structure enables 5.3$\times$ learning speedup via KD.}
+\label{tab:hierarchical}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Metric & Hard Labels & KD & Difference \\
+\midrule
+\textbf{Epochs to 90\% acc} & 160 & \textbf{30} & \textbf{5.3$\times$ faster} \\
+Final accuracy & 99.998\% & 100\% & +0.002\% \\
+Effective rank & 4.74 & 3.75 & $-$0.99 \\
+View 0 contribution & 0.33 & 0.49 & +0.16 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+KD achieves 90\% accuracy in \textbf{30 epochs} vs.\ 160 for hard labels---a \textbf{5.3$\times$ speedup}.
+
+\subsection{Mechanism: Soft Labels Encode Inter-Class Similarity}
+
+The teacher's soft labels contain rich information:
+\begin{itemize}
+    \item Average entropy: 1.59 / 2.30 (max)---meaningful spread, not peaked
+    \item Average true superclass probability: 55\%---confident but not certain
+    \item \textbf{Same-superclass confusion: 17.7\%}---teacher encodes that ``huskies look like wolves''
+\end{itemize}
+
+When the teacher sees a ``husky'' (fine class), it places:
+\begin{itemize}
+    \item $\sim$55\% on true superclass (``dog'')
+    \item $\sim$18\% on other subclasses within ``dog'' (wolves, poodles)
+    \item $\sim$27\% on other superclasses
+\end{itemize}
+
+This encodes: ``this is a dog, but it looks somewhat like a wolf''---information that hard labels \textit{cannot} provide.
+
+\subsection{The Insight: Brakes vs.\ Gas}
+
+\begin{table}[h]
+\centering
+\caption{Two modes of soft label operation.}
+\label{tab:brakesgas}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Setting & Soft Label Effect & Mechanism \\
+\midrule
+Flat classes & \textbf{Brakes} (slower, balanced) & Suppress dominant pathways \\
+Hierarchical & \textbf{Gas} (faster) & Encode additional structure \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+In flat-class settings, teacher and student have the same label granularity---soft labels only redistribute existing signal. In hierarchical settings, the teacher has richer labels---soft labels contain \textit{new} information that accelerates learning.
+
+%==============================================================================
+% 6. FINDING 3: DIVERSITY + WEIGHTING FOR BALANCE
+%==============================================================================
+\section{Finding 3: Achieving Balance Requires Diversity and Weighting}
+\label{sec:diversity}
+
+\subsection{The Goal}
+
+Can we achieve student representations that are \textit{more balanced} than hard labels (higher effective rank)?
+
+\subsection{Step 1: Force Teacher Diversity}
+
+Since random seeds don't create diversity, we force it by training \textbf{single-view teachers}---each teacher only sees one view (others masked to zero):
+
+\begin{table}[h]
+\centering
+\caption{Single-view teachers have verified diagonal dominance.}
+\label{tab:singleview}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Teacher & Sees Only & Accuracy & Dominant View \\
+\midrule
+Teacher 0 & View 0 & 99.9\% & V0 = 0.874 \\
+Teacher 1 & View 1 & 84.3\% & V1 = 0.862 \\
+Teacher 2 & View 2 & 35.8\% & V2 = 0.564 \\
+Teacher 3 & View 3 & 21.2\% & V3 = 0.308 \\
+Teacher 4 & View 4 & 10.1\% & V4 = 0.236 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Each teacher has highest contribution on its designated view. \textbf{Diagonal dominance verified.}
+
+\subsection{Step 2: The Weighting Problem}
+
+With \textbf{uniform weighting}, confident teachers dominate:
+
+\begin{table}[h]
+\centering
+\caption{Uniform weighting fails---confident teachers dominate soft labels.}
+\label{tab:uniform}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Method & Effective Rank & View 0 & Result \\
+\midrule
+Hard Labels & 4.73 & 0.333 & Baseline \\
+KD (uniform weights) & 4.03 & 0.442 & \textbf{Worse} (more WTA) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Uniform weighting produces \textit{lower} effective rank than hard labels (4.03 vs.\ 4.73). Teachers with strong views (high accuracy) produce confident predictions that dominate the averaged soft labels.
+
+\subsection{Step 3: Inverse Signal Weighting}
+
+Weight teachers inversely to their signal strength:
+\begin{equation}
+    w_m \propto 1 / \text{signal}_m
+\end{equation}
+
+This compensates for confident teachers, giving weak-view teachers equal influence.
+
+\begin{table}[h]
+\centering
+\caption{Inverse signal weighting achieves rank $>$ hard labels.}
+\label{tab:inverse}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Method & Effective Rank & View 0 & View Contributions \\
+\midrule
+Hard Labels & 4.73 & 0.333 & [0.33, 0.21, 0.16, 0.15, 0.15] \\
+KD (uniform) & 4.03 & 0.442 & [0.44, 0.26, 0.13, 0.09, 0.08] \\
+\textbf{KD (inv signal)} & \textbf{4.95} & \textbf{0.252} & [0.25, 0.21, 0.18, 0.18, 0.18] \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{KD with inverse signal weighting achieves effective rank 4.95 vs.\ 4.73 for hard labels.}
+
+\subsection{The Trade-off: Balance vs.\ Speed}
+
+\begin{table}[h]
+\centering
+\caption{Fundamental trade-off: balance requires sacrificing speed.}
+\label{tab:tradeoff}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Method & Effective Rank & Epochs to 90\% & Speed vs.\ Hard \\
+\midrule
+Hard Labels & 4.73 & 150 & 1.0$\times$ \\
+KD (uniform) & 4.03 & \textbf{90} & \textbf{1.7$\times$ faster} \\
+KD (inv signal) & \textbf{4.95} & 250 & \textbf{0.6$\times$ (slower)} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{itemize}
+    \item \textbf{Uniform weighting}: Fast (90 epochs, 1.7$\times$ speedup) but creates more WTA (rank 4.03)
+    \item \textbf{Inverse signal weighting}: Highest rank (4.95) but slowest (250 epochs, 0.6$\times$)
+    \item \textbf{Hard labels}: Middle ground (150 epochs, rank 4.73)
+\end{itemize}
+
+\subsection{Theoretical Grounding: Make Haste Slowly}
+
+This trade-off is predicted by the ``Make Haste Slowly'' principle~\cite{jarvis2025makehaste}:
+
+\begin{equation}
+    \text{Learning speed} \propto \sigma \quad \text{(singular values)}
+\end{equation}
+
+\begin{itemize}
+    \item Hard labels: Natural neural race $\rightarrow$ high-$\sigma$ pathways dominate (WTA)
+    \item Uniform KD: Confident teachers (high-$\sigma$) dominate $\rightarrow$ still fast, still WTA
+    \item Inverse KD: Upweights low-$\sigma$ teachers $\rightarrow$ \textbf{fights the neural race}
+\end{itemize}
+
+Inverse weighting dilutes gradient from fast-learning (high-$\sigma$) pathways. This achieves balance but necessarily slows convergence. \textbf{The trade-off is fundamental---you cannot escape it within gradient-based learning.}
+
+%==============================================================================
+% 7. PRACTICAL IMPLICATIONS
+%==============================================================================
+\section{Practical Implications}
+\label{sec:practical}
+
+Our findings yield actionable guidelines:
+
+\subsection{For Learning Speedup}
+
+\textbf{Use KD when teachers have richer knowledge than students.} In hierarchical settings (teacher knows fine-grained labels, student needs coarse labels), expect significant speedup ($\sim$5$\times$). Accept that the student will inherit the teacher's view biases.
+
+\subsection{For Achieving Balanced Representations}
+
+\begin{enumerate}
+    \item \textbf{Don't rely on random seeds for diversity}---teachers may converge to identical solutions
+    \item \textbf{Force diversity explicitly}---train single-view teachers or use other diversity mechanisms
+    \item \textbf{Weight inversely to confidence}---prevents confident teachers from dominating
+    \item \textbf{Accept the speed trade-off}---more balance means slower learning
+\end{enumerate}
+
+\subsection{Choosing Your Priority}
+
+\begin{table}[h]
+\centering
+\caption{Recipe for different goals.}
+\label{tab:recipe}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Goal & Approach & Trade-off \\
+\midrule
+Maximum speed & KD with uniform weights & More WTA \\
+Maximum balance & KD with inverse weights & Slower learning \\
+Speed + some balance & Hard labels & Middle ground \\
+Speed + new information & Hierarchical KD & Inherits teacher bias \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%==============================================================================
+% 8. RELATED WORK
+%==============================================================================
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{Knowledge Distillation.} Hinton et al.~\cite{hinton2015distilling} introduced KD, showing that soft labels from teachers improve student generalization. Subsequent work explored temperature effects~\cite{hinton2015distilling}, intermediate feature matching~\cite{romero2015fitnets}, and self-distillation~\cite{furlanello2018born}. Our work provides mechanistic understanding of when and why KD helps.
+
+\paragraph{Multi-View Learning.} Allen-Zhu \& Li~\cite{allen2023towards} formalize multi-view learning and show that KD transfers view coverage. We extend this by showing that KD is a transfer mechanism whose effect depends on teacher diversity---which may not emerge naturally.
+
+\paragraph{Neural Race Dynamics.} Saxe et al.~\cite{saxe2022neural} develop the neural race reduction, showing winner-take-all dynamics in gated networks. We apply this framework to understand KD.
+
+\paragraph{Learning Dynamics and Singular Values.} Saxe et al.~\cite{saxe2014exact} show that learning dynamics in deep linear networks are governed by singular values. Jarvis et al.~\cite{jarvis2025makehaste} extend this to ReLU networks via GDLN equivalence, establishing the ``Make Haste Slowly'' principle. We use this principle to explain the balance-speed trade-off.
+
+%==============================================================================
+% 9. LIMITATIONS AND FUTURE WORK
+%==============================================================================
+\section{Limitations and Future Work}
+\label{sec:limitations}
+
+\paragraph{GDLN Setting.} Our experiments use linear networks matching the GDLN framework. While this enables precise analysis, findings may not fully generalize to deep nonlinear networks. The absence of natural teacher diversity may be specific to our setting.
+
+\paragraph{Synthetic Data.} We use synthetic multi-view data with known structure. Real-world data has unknown view structure, making direct validation challenging.
+
+\paragraph{Two-Layer Networks.} Our analysis focuses on 2-layer networks. Deeper networks introduce additional complexity that warrants investigation.
+
+\paragraph{Future Directions.}
+\begin{itemize}
+    \item \textbf{Conditions for natural diversity}: Under what settings do teachers naturally learn different views?
+    \item \textbf{Optimal weighting schemes}: Can we find weightings that achieve better speed-balance trade-offs?
+    \item \textbf{Deep nonlinear networks}: Do our findings extend to realistic architectures?
+    \item \textbf{Real-world validation}: Can we identify proxy measures for view structure in real data?
+\end{itemize}
+
+%==============================================================================
+% 10. CONCLUSION
+%==============================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+We have provided a mechanistic account of knowledge distillation through the lens of neural race dynamics. Our key findings:
+
+\begin{enumerate}
+    \item \textbf{KD is a transfer mechanism}: Students inherit the teacher ensemble's collective representation. KD doesn't inherently break WTA---it transfers whatever the teachers learned.
+
+    \item \textbf{Hierarchical structure enables acceleration}: When teachers have richer knowledge (finer-grained labels), soft labels encode inter-class similarity that provides 5.3$\times$ speedup.
+
+    \item \textbf{Balance requires diversity + weighting}: Achieving balanced representations requires forcing teacher diversity and weighting inversely to signal strength, at the cost of slower learning.
+
+    \item \textbf{The speed-balance trade-off is fundamental}: Per the ``Make Haste Slowly'' principle, fast learning favors high-$\sigma$ pathways. Achieving balance requires diluting this signal, which necessarily slows convergence.
+\end{enumerate}
+
+These findings refine our understanding of KD, moving from ``KD helps'' to ``KD transfers, and its effect depends on what the teachers learned.'' This mechanistic understanding enables practitioners to predict when KD will help and to design teacher ensembles that achieve desired student properties.
+
+%==============================================================================
+% REFERENCES
+%==============================================================================
+\bibliographystyle{plain}
+
+\begin{thebibliography}{10}
+
+\bibitem{allen2023towards}
+Zeyuan Allen-Zhu and Yuanzhi Li.
+\newblock Towards understanding ensemble, knowledge distillation and self-distillation in deep learning.
+\newblock In \emph{International Conference on Learning Representations (ICLR)}, 2023.
+
+\bibitem{furlanello2018born}
+Tommaso Furlanello, Zachary Lipton, Michael Tschannen, Laurent Itti, and Anima Anandkumar.
+\newblock Born again neural networks.
+\newblock In \emph{International Conference on Machine Learning (ICML)}, 2018.
+
+\bibitem{hinton2015distilling}
+Geoffrey Hinton, Oriol Vinyals, and Jeff Dean.
+\newblock Distilling the knowledge in a neural network.
+\newblock \emph{arXiv preprint arXiv:1503.02531}, 2015.
+
+\bibitem{jarvis2025makehaste}
+Devon Jarvis, Richard Klein, Benjamin Rosman, and Andrew~M. Saxe.
+\newblock Make haste slowly: A theory of emergent structured mixed selectivity in feature learning ReLU networks.
+\newblock In \emph{International Conference on Learning Representations (ICLR)}, 2025.
+
+\bibitem{romero2015fitnets}
+Adriana Romero, Nicolas Ballas, Samira Ebrahimi Kahou, Antoine Chassang, Carlo Gatta, and Yoshua Bengio.
+\newblock FitNets: Hints for thin deep nets.
+\newblock In \emph{International Conference on Learning Representations (ICLR)}, 2015.
+
+\bibitem{saxe2014exact}
+Andrew~M. Saxe, James~L. McClelland, and Surya Ganguli.
+\newblock Exact solutions to the nonlinear dynamics of learning in deep linear networks.
+\newblock In \emph{International Conference on Learning Representations (ICLR)}, 2014.
+
+\bibitem{saxe2022neural}
+Andrew~M. Saxe, Shagun Sodhani, and Sam Gershman.
+\newblock The neural race reduction: Dynamics of abstraction in gated networks.
+\newblock In \emph{International Conference on Machine Learning (ICML)}, 2022.
+
+\end{thebibliography}
+
+%==============================================================================
+% APPENDICES
+%==============================================================================
+\appendix
+
+\section{Experimental Details}
+\label{app:details}
+
+\subsection{Data Generation}
+
+Multi-view data is generated as follows:
+\begin{enumerate}
+    \item Generate $K$ class prototypes as random unit vectors in $\R^{d_{\text{view}}}$
+    \item For each class $y$ and view $m$, create view feature $\phi_{y,m} = \text{signal}_m \cdot \text{prototype}_y$ in the $m$-th coordinate subspace
+    \item Sample inputs as $x = \sum_m \phi_{y,m} + \varepsilon$ where $\varepsilon \sim \mathcal{N}(0, \sigma^2 I)$
+\end{enumerate}
+
+\subsection{Training Configuration}
+
+\begin{itemize}
+    \item Optimizer: SGD
+    \item Learning rate: 0.1
+    \item Batch size: Full batch
+    \item Epochs: 1000 (flat), 2000 (hierarchical teachers)
+    \item Initialization: $W \sim \mathcal{N}(0, 0.01)$
+    \item Loss: Cross-entropy (classification), MSE (soft label matching)
+\end{itemize}
+
+\subsection{KD Configuration}
+
+\begin{itemize}
+    \item Temperature: $\tau = 3.0$
+    \item Soft label weight: $\alpha = 0.7$ (for $\alpha \cdot \text{KD} + (1-\alpha) \cdot \text{hard}$)
+    \item Ensemble: 5 teachers (unless otherwise specified)
+\end{itemize}
+
+\section{Additional Results}
+\label{app:results}
+
+\subsection{Temperature Sweep}
+
+In our GDLN setting, temperature has marginal effect:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Temperature & Effective Rank & View 0 & Accuracy \\
+\midrule
+$\tau = 1.0$ & 4.947 & 0.258 & 99.2\% \\
+$\tau = 5.0$ & 4.950 & 0.256 & 99.2\% \\
+$\tau = 20.0$ & 4.950 & 0.256 & 99.2\% \\
+\bottomrule
+\end{tabular}
+\caption{Temperature has marginal effect in GDLN setting.}
+\end{table}
+
+\subsection{Alpha Sweep}
+
+Smooth transition with accuracy degradation at high $\alpha$:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lccc@{}}
+\toprule
+$\alpha$ & Effective Rank & View 0 & Accuracy \\
+\midrule
+0.0 (hard only) & 4.37 & 0.407 & 100\% \\
+0.5 & 4.84 & 0.302 & 99.8\% \\
+0.7 & 4.95 & 0.257 & 99.2\% \\
+1.0 (soft only) & 5.00 & 0.213 & 86.1\% \\
+\bottomrule
+\end{tabular}
+\caption{Pure soft labels ($\alpha=1.0$) achieve only 86.1\% accuracy.}
+\end{table}
+
+\end{document}
