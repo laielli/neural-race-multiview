@@ -1,7 +1,7 @@
 # Experimental Findings Summary
 
 **Last Updated**: 2026-01-19
-**Status**: Two breakthroughs achieved — (1) hierarchical structure enables 5.3x speedup, (2) forced diverse ensemble with weighting achieves rank > hard labels
+**Status**: Three breakthroughs achieved — (1) hierarchical structure enables 5.3x speedup, (2) forced diverse ensemble with weighting achieves rank > hard labels, (3) balance-speed trade-off theoretically grounded via "Make Haste Slowly"
 
 ---
 
@@ -202,7 +202,7 @@ This encodes: "this is a dog, but it looks somewhat like a wolf" — information
 | No natural ensemble diversity | ✓ **CONFIRMED** | V0 std = 0.000 with random seeds |
 | Forced diversity + weighting works | ✓ **NEW** | Single-view teachers + inv weights → rank 4.95 > 4.73 |
 | Uniform weighting fails | ✓ **NEW** | Confident teachers dominate → more WTA |
-| **Balance-speed trade-off** | ✓ **NEW** | Inv weights: best rank (4.95) but slowest (250 ep); uniform: fast (90 ep) but more WTA |
+| **Balance-speed trade-off** | ✓ **THEORY** | Predicted by "Make Haste Slowly": fast learning ∝ σ → balance requires diluting high-σ signal |
 | Temperature effect | ✗ Not found (flat) | May matter in hierarchical settings |
 | α phase transition | ✓ Smooth, not sharp | Use α ∈ [0.5, 0.7] |
 | Pure soft labels fail (flat) | ✓ 86% accuracy | Hard labels essential for flat tasks |
@@ -260,6 +260,7 @@ The key insight: KD is a **transfer mechanism**. It transfers whatever the teach
 3. **Weighting requirement**: Uniform weighting fails; inverse-signal weighting achieves rank > hard labels
 4. **Acceleration condition**: KD accelerates when teacher has richer knowledge (5.3x speedup)
 5. **Loss function effect**: CE creates WTA teachers; MSE creates balanced but uninformative teachers
+6. **Balance-speed trade-off**: Theoretically grounded via "Make Haste Slowly" — fast learning favors high-σ pathways; balance requires diluting this signal → slower learning is unavoidable
 
 ### Resolution of Allen-Zhu Discrepancy
 Allen-Zhu et al. claim diverse teachers learn different views. Our experiments show:
@@ -423,6 +424,34 @@ There's a fundamental trade-off between view balance and learning speed:
 - **Hard labels**: Middle ground (150 epochs, rank 4.73)
 
 **Interpretation**: Confident teachers (those with strong views) provide better learning signal. When you upweight weak teachers to achieve balance, you're trading signal quality for balance — resulting in slower learning.
+
+### Theoretical Grounding: "Make Haste Slowly" (Jarvis et al., ICLR 2025) ⭐
+
+The balance-speed trade-off is **theoretically predicted** by the ["Make Haste Slowly"](https://arxiv.org/abs/2503.06181) paper, which establishes an equivalence between ReLU networks and GDLNs.
+
+**Key insight from the theory**:
+- Learning speed is proportional to **singular values** (σ) of input-output correlations
+- Networks naturally adopt structures that maximize learning speed
+- High-σ pathways "win the neural race" because they learn fastest
+
+**Connection to our findings**:
+
+| Our Setting | Theoretical Interpretation |
+|-------------|---------------------------|
+| Hard labels | Natural neural race → high-σ pathways dominate (WTA) |
+| KD uniform weights | Confident teachers (high σ) dominate soft labels → fast but WTA |
+| KD inverse weights | Upweights low-σ teachers → **fights the neural race** |
+
+**Why inverse weighting is slower**:
+```
+Learning speed ∝ singular values (σ)
+Inverse weighting ∝ 1/σ → dilutes high-σ gradient signal
+Result: More balanced BUT slower convergence
+```
+
+**The trade-off is fundamental**: Fast learning inherently favors high-σ pathways. Achieving balance requires suppressing/diluting the high-σ signal, which necessarily slows learning. You cannot escape this trade-off within gradient-based learning.
+
+**Citation**: "Consistent with the 'Make Haste Slowly' principle (Jarvis et al., 2025), achieving balanced representations requires trading off learning speed, as inverse signal weighting dilutes gradients from fast-learning (high singular value) pathways."
 
 ### Recipe for Diverse Ensemble KD
 
