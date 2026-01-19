@@ -1,0 +1,62 @@
+{
+  "timestamp": "2026-01-19T12:14:30.423499",
+  "config": {
+    "M": 5,
+    "K_super": 10,
+    "K_sub": 3,
+    "d_view": 50,
+    "hidden": 128,
+    "n_samples": 10000,
+    "epochs": 1000,
+    "teacher_epochs": 2000,
+    "lr": 0.1,
+    "init_scale": 0.1,
+    "n_teachers": 5,
+    "temperature": 3.0,
+    "alpha": 0.7,
+    "subclass_similarity": 0.5,
+    "n_seeds": 5
+  },
+  "dataset": {
+    "signal_strengths": [
+      1.0,
+      0.5,
+      0.25,
+      0.125,
+      0.0625
+    ],
+    "K_fine": 30
+  },
+  "teachers": {
+    "avg_fine_accuracy": 0.9998399972915649,
+    "avg_coarse_accuracy": 1.0,
+    "avg_effective_rank": 3.4144849389473166
+  },
+  "soft_label_info": {
+    "avg_entropy": 1.587548017501831,
+    "max_entropy": 2.302585092994046,
+    "avg_true_class_prob": 0.552342414855957,
+    "avg_off_diagonal_mass": 0.4476575255393982,
+    "avg_same_superclass_confusion": 0.17711360118612646
+  },
+  "hard_labels": {
+    "avg_accuracy": 0.9999799966812134,
+    "std_accuracy": 4.0006637573242183e-05,
+    "avg_effective_rank": 4.738311902395408,
+    "avg_view0_contribution": 0.33156085669657054,
+    "epoch_to_90": 160
+  },
+  "kd": {
+    "avg_accuracy": 1.0,
+    "std_accuracy": 0.0,
+    "avg_effective_rank": 3.747139817931859,
+    "avg_view0_contribution": 0.4851556979945526,
+    "epoch_to_90": 30
+  },
+  "comparison": {
+    "accuracy_diff": 2.000331878659889e-05,
+    "rank_diff": -0.9911720844635488,
+    "speedup": 5.333333333333333
+  },
+  "success": true
+}
