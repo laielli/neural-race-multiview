@@ -867,3 +867,415 @@ def train_teachers(
         teachers.append(teacher)
 
     return teachers
+
+
+# =============================================================================
+# Multi-Task Training Functions
+# =============================================================================
+
+
+def train_multitask_hard(
+    model,
+    dataset,
+    epochs: int = 500,
+    lr: float = 0.02,
+    log_interval: int = 25,
+    track_svd: bool = True,
+    verbose: bool = True
+):
+    """
+    Train GatedDLN on multi-task data with hard labels.
+
+    Each pathway m is trained on task m using MSE loss.
+    This is the key setup for observing race dynamics: different tasks
+    compete for shared network capacity.
+
+    Args:
+        model: GatedDLN with M pathways
+        dataset: MultiTaskMultiViewDataset with M tasks
+        epochs: Number of training epochs
+        lr: Learning rate
+        log_interval: How often to log metrics
+        track_svd: If True, track singular values
+        verbose: Whether to print progress
+
+    Returns:
+        dict: Training history including per-task accuracy and dominance
+    """
+    # Gradient flow: SGD with no momentum
+    optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.0)
+
+    history = {
+        'loss': [],
+        'epochs_logged': [],
+        'task_accuracies': [],
+        'pathway_strengths': [],
+        'dominance': [],
+        'svd_metrics': []
+    }
+
+    if track_svd:
+        history['svd'] = {
+            'encoders': [],
+            'hidden': [],
+            'decoders': []
+        }
+
+    # Get full dataset as tensors
+    X = dataset._data
+    Y = dataset.labels  # (n_samples, M)
+
+    iterator = range(epochs)
+    if verbose:
+        iterator = tqdm(iterator, desc="Training Multi-Task (Hard)")
+
+    for epoch in iterator:
+        model.train()
+        optimizer.zero_grad()
+
+        # Compute multi-task MSE loss
+        # Each pathway m is trained on task m
+        total_loss = 0.0
+
+        for m in range(model.M):
+            # Extract view m's features
+            x_view = X[:, m * dataset.d_view:(m + 1) * dataset.d_view]
+
+            # Forward through pathway m (encoder m -> hidden -> decoder m)
+            output_m = model.forward_pathway(x_view, encoder_idx=m, decoder_idx=m)
+
+            # One-hot targets for task m
+            target_m = F.one_hot(Y[:, m], num_classes=model.d_output).float()
+
+            # MSE loss
+            loss_m = F.mse_loss(output_m, target_m)
+            total_loss = total_loss + loss_m
+
+        # Average over tasks
+        total_loss = total_loss / model.M
+
+        total_loss.backward()
+        optimizer.step()
+
+        # Logging
+        if epoch % log_interval == 0 or epoch == epochs - 1:
+            model.eval()
+
+            # Compute per-task accuracy
+            task_accs = {}
+            with torch.no_grad():
+                for m in range(model.M):
+                    x_view = X[:, m * dataset.d_view:(m + 1) * dataset.d_view]
+                    output_m = model.forward_pathway(x_view, encoder_idx=m, decoder_idx=m)
+                    preds = output_m.argmax(dim=-1)
+                    acc = (preds == Y[:, m]).float().mean().item()
+                    task_accs[m] = acc
+
+            history['loss'].append(total_loss.item())
+            history['epochs_logged'].append(epoch)
+            history['task_accuracies'].append(task_accs)
+            history['pathway_strengths'].append(model.get_all_pathway_strengths())
+            history['dominance'].append(model.compute_dominance())
+            history['svd_metrics'].append(model.compute_svd_metrics())
+
+            if track_svd:
+                svs = model.get_all_singular_values()
+                history['svd']['encoders'].append(svs['encoders'])
+                history['svd']['hidden'].append(svs['hidden'])
+                history['svd']['decoders'].append(svs['decoders'])
+
+            if verbose:
+                mean_acc = sum(task_accs.values()) / len(task_accs)
+                dom = history['dominance'][-1]
+                iterator.set_postfix(
+                    loss=f"{total_loss.item():.4f}",
+                    acc=f"{mean_acc:.3f}",
+                    dom=f"{dom:.3f}"
+                )
+
+    return history
+
+
+def get_multitask_soft_targets(teachers, X, dataset, temperature=3.0):
+    """
+    Get soft targets from teacher ensemble for multi-task training.
+
+    Args:
+        teachers: List of trained GatedDLN models
+        X: Input data (n_samples, M * d_view)
+        dataset: MultiTaskMultiViewDataset
+        temperature: Softmax temperature
+
+    Returns:
+        soft_targets: Dict {task_m: (n_samples, K) tensor of probabilities}
+    """
+    soft_targets = {m: [] for m in range(dataset.M)}
+
+    with torch.no_grad():
+        for teacher in teachers:
+            teacher.eval()
+            for m in range(dataset.M):
+                # Get view m features
+                x_view = X[:, m * dataset.d_view:(m + 1) * dataset.d_view]
+                # Forward through pathway m
+                output_m = teacher.forward_pathway(x_view, encoder_idx=m, decoder_idx=m)
+                # Soft probabilities
+                probs = F.softmax(output_m / temperature, dim=-1)
+                soft_targets[m].append(probs)
+
+        # Average over teachers
+        for m in range(dataset.M):
+            soft_targets[m] = torch.stack(soft_targets[m]).mean(dim=0)
+
+    return soft_targets
+
+
+def train_multitask_kd(
+    student,
+    teachers,
+    dataset,
+    epochs: int = 500,
+    lr: float = 0.02,
+    temperature: float = 3.0,
+    alpha: float = 0.9,
+    log_interval: int = 25,
+    track_svd: bool = True,
+    verbose: bool = True
+):
+    """
+    Train GatedDLN student via KD from teacher ensemble on multi-task data.
+
+    Uses soft targets from teacher ensemble to guide student training.
+    The hypothesis (Theorem 3): KD should distribute gradients to preserve
+    multiple pathways, preventing winner-take-all dynamics.
+
+    Args:
+        student: GatedDLN student model
+        teachers: List of trained GatedDLN teacher models
+        dataset: MultiTaskMultiViewDataset
+        epochs: Number of training epochs
+        lr: Learning rate
+        temperature: KD temperature
+        alpha: Weight for soft labels (1-alpha for hard labels)
+        log_interval: How often to log metrics
+        track_svd: If True, track singular values
+        verbose: Whether to print progress
+
+    Returns:
+        dict: Training history
+    """
+    # Gradient flow: SGD with no momentum
+    optimizer = torch.optim.SGD(student.parameters(), lr=lr, momentum=0.0)
+
+    history = {
+        'loss': [],
+        'epochs_logged': [],
+        'task_accuracies': [],
+        'pathway_strengths': [],
+        'dominance': [],
+        'svd_metrics': []
+    }
+
+    if track_svd:
+        history['svd'] = {
+            'encoders': [],
+            'hidden': [],
+            'decoders': []
+        }
+
+    # Get full dataset
+    X = dataset._data
+    Y = dataset.labels
+
+    # Set teachers to eval mode
+    for t in teachers:
+        t.eval()
+
+    iterator = range(epochs)
+    if verbose:
+        iterator = tqdm(iterator, desc="Training Multi-Task (KD)")
+
+    for epoch in iterator:
+        student.train()
+        optimizer.zero_grad()
+
+        # Get soft targets from teacher ensemble
+        soft_targets = get_multitask_soft_targets(teachers, X, dataset, temperature)
+
+        # Compute KD loss for each task
+        total_loss = 0.0
+
+        for m in range(student.M):
+            # Extract view m's features
+            x_view = X[:, m * dataset.d_view:(m + 1) * dataset.d_view]
+
+            # Student forward through pathway m
+            output_m = student.forward_pathway(x_view, encoder_idx=m, decoder_idx=m)
+
+            # Soft label loss (KL divergence)
+            student_log_probs = F.log_softmax(output_m / temperature, dim=-1)
+            soft_loss = F.kl_div(
+                student_log_probs,
+                soft_targets[m],
+                reduction='batchmean'
+            ) * (temperature ** 2)
+
+            # Hard label loss (MSE)
+            target_m = F.one_hot(Y[:, m], num_classes=student.d_output).float()
+            hard_loss = F.mse_loss(output_m, target_m)
+
+            # Combined loss
+            loss_m = alpha * soft_loss + (1 - alpha) * hard_loss
+            total_loss = total_loss + loss_m
+
+        # Average over tasks
+        total_loss = total_loss / student.M
+
+        total_loss.backward()
+        optimizer.step()
+
+        # Logging
+        if epoch % log_interval == 0 or epoch == epochs - 1:
+            student.eval()
+
+            # Compute per-task accuracy
+            task_accs = {}
+            with torch.no_grad():
+                for m in range(student.M):
+                    x_view = X[:, m * dataset.d_view:(m + 1) * dataset.d_view]
+                    output_m = student.forward_pathway(x_view, encoder_idx=m, decoder_idx=m)
+                    preds = output_m.argmax(dim=-1)
+                    acc = (preds == Y[:, m]).float().mean().item()
+                    task_accs[m] = acc
+
+            history['loss'].append(total_loss.item())
+            history['epochs_logged'].append(epoch)
+            history['task_accuracies'].append(task_accs)
+            history['pathway_strengths'].append(student.get_all_pathway_strengths())
+            history['dominance'].append(student.compute_dominance())
+            history['svd_metrics'].append(student.compute_svd_metrics())
+
+            if track_svd:
+                svs = student.get_all_singular_values()
+                history['svd']['encoders'].append(svs['encoders'])
+                history['svd']['hidden'].append(svs['hidden'])
+                history['svd']['decoders'].append(svs['decoders'])
+
+            if verbose:
+                mean_acc = sum(task_accs.values()) / len(task_accs)
+                dom = history['dominance'][-1]
+                iterator.set_postfix(
+                    loss=f"{total_loss.item():.4f}",
+                    acc=f"{mean_acc:.3f}",
+                    dom=f"{dom:.3f}"
+                )
+
+    return history
+
+
+def train_multitask_teachers(
+    dataset,
+    num_teachers: int = 5,
+    hidden: int = 64,
+    epochs: int = 500,
+    lr: float = 0.02,
+    init_scale: float = 0.2,
+    verbose: bool = True
+):
+    """
+    Train ensemble of GatedDLN teachers on multi-task data.
+
+    Each teacher is trained with a different random seed, so each
+    learns a different subset of tasks (due to WTA dynamics).
+
+    Args:
+        dataset: MultiTaskMultiViewDataset
+        num_teachers: Number of teachers to train
+        hidden: Hidden layer width
+        epochs: Training epochs per teacher
+        lr: Learning rate
+        init_scale: Initialization scale
+        verbose: Whether to print progress
+
+    Returns:
+        list: List of trained GatedDLN models
+        list: List of training histories
+    """
+    from .model import GatedDLN
+
+    teachers = []
+    histories = []
+
+    for i in range(num_teachers):
+        if verbose:
+            print(f"\n{'='*50}")
+            print(f"Training teacher {i+1}/{num_teachers} (seed={i})")
+            print(f"{'='*50}")
+
+        # Create model with different seed
+        torch.manual_seed(i)
+        teacher = GatedDLN(
+            M=dataset.M,
+            d_input=dataset.d_view,
+            hidden=hidden,
+            d_output=dataset.K,
+            gate_mode='diagonal',
+            init_scale=init_scale
+        )
+        teacher.init_orthogonal(init_scale)
+
+        # Train with hard labels
+        history = train_multitask_hard(
+            teacher, dataset,
+            epochs=epochs,
+            lr=lr,
+            verbose=verbose
+        )
+
+        teachers.append(teacher)
+        histories.append(history)
+
+        if verbose:
+            final_dom = history['dominance'][-1]
+            final_accs = history['task_accuracies'][-1]
+            mean_acc = sum(final_accs.values()) / len(final_accs)
+            best_task = max(final_accs, key=final_accs.get)
+            print(f"\nTeacher {i+1} results:")
+            print(f"  Dominance: {final_dom:.4f}")
+            print(f"  Mean accuracy: {mean_acc:.4f}")
+            print(f"  Best task: {best_task} ({final_accs[best_task]:.4f})")
+
+    return teachers, histories
+
+
+def compute_ensemble_coverage(teachers, dataset, threshold=0.5):
+    """
+    Compute fraction of tasks where at least one teacher exceeds threshold.
+
+    Args:
+        teachers: List of trained GatedDLN models
+        dataset: MultiTaskMultiViewDataset
+        threshold: Accuracy threshold
+
+    Returns:
+        float: Coverage in [0, 1]
+    """
+    X = dataset._data
+    Y = dataset.labels
+
+    task_learned = [False] * dataset.M
+
+    for teacher in teachers:
+        teacher.eval()
+        with torch.no_grad():
+            for m in range(dataset.M):
+                if task_learned[m]:
+                    continue
+                x_view = X[:, m * dataset.d_view:(m + 1) * dataset.d_view]
+                output_m = teacher.forward_pathway(x_view, encoder_idx=m, decoder_idx=m)
+                preds = output_m.argmax(dim=-1)
+                acc = (preds == Y[:, m]).float().mean().item()
+                if acc > threshold:
+                    task_learned[m] = True
+
+    return sum(task_learned) / len(task_learned)

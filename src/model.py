@@ -443,6 +443,93 @@ class GatedDLN(nn.Module):
             return max(strengths) / total
         return 1.0 / self.M
 
+    def compute_svd_metrics(self):
+        """
+        Compute SVD-based metrics for all pathways.
+
+        Metrics computed per encoder/decoder:
+        - effective_rank: (sum(σ))² / sum(σ²) - higher = more balanced spectrum
+        - spectral_entropy: -sum(σ_norm * log(σ_norm)) - higher = more balanced
+        - top3_fraction: sum(top 3 σ) / sum(all σ) - lower = more balanced
+
+        Returns:
+            dict: Metrics keyed by 'enc_{m}_*' and 'dec_{m}_*'
+        """
+        metrics = {}
+
+        with torch.no_grad():
+            for m, (enc, dec) in enumerate(zip(self.encoders, self.decoders)):
+                # Encoder SVD
+                _, s_enc, _ = torch.linalg.svd(enc.weight)
+                s_sum = s_enc.sum()
+                s_sq_sum = (s_enc ** 2).sum()
+
+                # Effective rank
+                if s_sq_sum > 0:
+                    eff_rank = (s_sum ** 2) / s_sq_sum
+                else:
+                    eff_rank = 0.0
+                metrics[f'enc_{m}_eff_rank'] = eff_rank.item()
+
+                # Spectral entropy
+                if s_sum > 0:
+                    s_norm = s_enc / s_sum
+                    entropy = -(s_norm * torch.log(s_norm + 1e-10)).sum()
+                else:
+                    entropy = 0.0
+                metrics[f'enc_{m}_entropy'] = entropy.item()
+
+                # Top-3 fraction
+                if s_sum > 0:
+                    top3 = s_enc[:min(3, len(s_enc))].sum() / s_sum
+                else:
+                    top3 = 1.0
+                metrics[f'enc_{m}_top3_frac'] = top3.item()
+
+                # Decoder SVD
+                _, s_dec, _ = torch.linalg.svd(dec.weight)
+                s_sum = s_dec.sum()
+                s_sq_sum = (s_dec ** 2).sum()
+
+                if s_sq_sum > 0:
+                    eff_rank = (s_sum ** 2) / s_sq_sum
+                else:
+                    eff_rank = 0.0
+                metrics[f'dec_{m}_eff_rank'] = eff_rank.item()
+
+        return metrics
+
+    def get_all_singular_values(self):
+        """
+        Get all singular values for detailed analysis.
+
+        Returns:
+            dict: {
+                'encoders': list of (M,) arrays of singular values,
+                'hidden': array of singular values,
+                'decoders': list of (M,) arrays of singular values
+            }
+        """
+        result = {
+            'encoders': [],
+            'hidden': None,
+            'decoders': []
+        }
+
+        with torch.no_grad():
+            for enc in self.encoders:
+                _, s, _ = torch.linalg.svd(enc.weight)
+                result['encoders'].append(s.cpu().numpy())
+
+            _, s, _ = torch.linalg.svd(self.hidden_layer.weight)
+            result['hidden'] = s.cpu().numpy()
+
+            for dec in self.decoders:
+                _, s, _ = torch.linalg.svd(dec.weight)
+                result['decoders'].append(s.cpu().numpy())
+
+        return result
+
 
 class GatedMultiViewNet(GatedDLN):
     """
