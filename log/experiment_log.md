@@ -837,6 +837,72 @@ This is a **negative result** for Theorem 3 as originally stated.
 
 ---
 
+## Exp: Gradient SVD Analysis — COMPLETED ✓ (2026-01-21)
+
+### Question
+
+Do KD gradients have different singular value structure than hard-label gradients?
+
+### Background
+
+Theorem 3 predicts that soft labels distribute gradient signal across multiple pathways through the "external signal" term α_m. This should manifest as broader gradient singular value spectrum.
+
+### Setup
+
+- **Architecture**: SimpleCNN on CIFAR-10 (fc1: 2048→256, fc2: 256→128, fc3: 128→10)
+- **Teacher**: Trained with hard labels (76.2% accuracy)
+- **Students**: One trained with hard labels (77.0%), one with KD (78.0%)
+- **KD settings**: Temperature=4, α=0.9
+- **Checkpoints**: Epochs 1, 5, 10, 15
+- **Metrics**: Condition number κ, effective rank, spectral entropy
+
+### Results — Effective Rank (Higher = More Balanced)
+
+| Epoch | Layer | Hard | KD | Ratio |
+|-------|-------|------|-----|-------|
+| 1 | fc1 | 7.3 | 23.7 | **3.2×** |
+| 1 | fc2 | 7.9 | 9.7 | 1.2× |
+| 1 | fc3 | 3.5 | 4.1 | 1.2× |
+| 15 | fc1 | 62.7 | 91.3 | **1.5×** |
+| 15 | fc2 | 15.2 | 29.1 | **1.9×** |
+| 15 | fc3 | 4.2 | 4.8 | 1.1× |
+
+**KD gradients consistently have higher effective rank** across all layers and epochs.
+
+### Results — Condition Number
+
+Mixed results: KD had lower κ in 7/12 comparisons (58%). Less robust than effective rank.
+
+### Key Finding
+
+**KD achieves "gradient enrichment"** — soft labels spread gradient signal across more weight dimensions. This is exactly the "external signal" mechanism predicted by Theorem 3.
+
+- Hard labels: gradient concentrated in few directions (low effective rank)
+- KD: gradient distributed across many directions (high effective rank)
+- fc2 (middle layer) shows strongest effect (1.9× at epoch 15)
+
+### Interpretation
+
+The higher effective rank IS the "gradient distribution across pathways" predicted by Theorem 3. Soft labels provide information about multiple classes, creating gradient updates toward multiple feature directions simultaneously.
+
+### Negative Control: Muon Orthogonalization
+
+Separately tested whether gradient orthogonalization (Muon/Newton-Schulz) disrupts race dynamics.
+
+**Result**: Muon does NOT break WTA (dominance 0.42 vs SGD 0.39). Gradient orthogonalization ≠ gradient enrichment.
+
+### Code & Results
+
+- **Code**: `src/experiments/exp_gradient_svd.py`
+- **Results**: `log/results/exp_gradient_svd_20260121_194528.json`
+- **Muon experiment**: `src/experiments/exp_muon_race.py`
+
+### Paper Integration
+
+This experiment validates Theorem 3's mechanism (not just outcome). Will be added to Section 5 as "Validating the Gradient Distribution Mechanism."
+
+---
+
 ## Reference
 
 ### Hyperparameters (Default)
@@ -863,4 +929,4 @@ This is a **negative result** for Theorem 3 as originally stated.
 
 ---
 
-*Last updated: 2026-01-13*
+*Last updated: 2026-01-21*

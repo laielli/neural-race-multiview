@@ -432,6 +432,168 @@ def train_gated_dln(
     return history
 
 
+# Import Newton-Schulz orthogonalization for Muon
+import sys
+_muon_path = '/Users/michaellaielli/workspace/ai-lab/code_stack/inbox/muon'
+if _muon_path not in sys.path:
+    sys.path.insert(0, _muon_path)
+
+try:
+    from muon import zeropower_via_newtonschulz5
+    _MUON_AVAILABLE = True
+except ImportError:
+    _MUON_AVAILABLE = False
+    zeropower_via_newtonschulz5 = None
+
+
+def orthogonalize_exact_svd(G):
+    """
+    Exact orthogonalization via SVD: G = UΣV^T → UV^T
+
+    This removes ALL singular value information, setting all singular values to 1.
+    """
+    U, S, Vh = torch.linalg.svd(G, full_matrices=False)
+    return U @ Vh
+
+
+def train_gated_dln_with_optimizer(
+    model,
+    X,
+    Y,
+    optimizer_type: str = 'sgd',
+    epochs: int = 500,
+    lr: float = 0.02,
+    momentum: float = 0.0,
+    log_interval: int = 10,
+    track_svd: bool = True,
+    verbose: bool = True,
+    device: str = 'cpu'
+):
+    """
+    Train GatedDLN with specified optimizer, including Muon.
+
+    This extends train_gated_dln to support multiple optimizers for
+    comparing race dynamics under different gradient update rules.
+
+    Args:
+        model: GatedDLN or GatedMultiViewNet instance
+        X: Input data, shape (N, d)
+        Y: Target data, shape (N, d_output)
+        optimizer_type: 'sgd', 'adam', or 'muon'
+        epochs: Number of training epochs
+        lr: Learning rate
+        momentum: Momentum for SGD (0 = gradient flow for theory match)
+        log_interval: How often to log metrics
+        track_svd: If True, track singular values during training
+        verbose: Whether to print progress
+        device: Device to use ('cpu' or 'cuda')
+
+    Returns:
+        dict: Training history including loss, dominance, pathway strengths
+    """
+    if optimizer_type == 'muon' and not _MUON_AVAILABLE:
+        raise ImportError("Muon not available. Check that muon.py is in code_stack/inbox/muon/")
+
+    model = model.to(device)
+    X, Y = X.to(device), Y.to(device)
+
+    # Create optimizer (not used for Muon variants, but needed for SGD/Adam)
+    if optimizer_type == 'sgd':
+        optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=momentum)
+    elif optimizer_type == 'adam':
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    elif optimizer_type in ['muon', 'muon_exact']:
+        optimizer = None  # Manual updates
+    else:
+        raise ValueError(f"Unknown optimizer_type: {optimizer_type}")
+
+    history = {
+        'loss': [],
+        'epochs_logged': [],
+        'pathway_strengths': [],
+        'dominance': []
+    }
+
+    if track_svd:
+        history['svd'] = {
+            'encoders': [],
+            'hidden': [],
+            'decoders': []
+        }
+
+    iterator = range(epochs)
+    if verbose:
+        iterator = tqdm(iterator, desc=f"Training GatedDLN ({optimizer_type})")
+
+    for epoch in iterator:
+        model.train()
+
+        # Forward pass
+        loss = model(X, Y)
+
+        # Backward pass
+        if optimizer is not None:
+            optimizer.zero_grad()
+        else:
+            # Manual zero grad for Muon
+            for p in model.parameters():
+                if p.grad is not None:
+                    p.grad.zero_()
+
+        loss.backward()
+
+        # Apply updates
+        if optimizer_type == 'muon':
+            # Muon-style orthogonalized updates (Newton-Schulz approximation)
+            with torch.no_grad():
+                for p in model.parameters():
+                    if p.grad is not None and p.ndim == 2:
+                        # Orthogonalize gradient via Newton-Schulz
+                        g_orth = zeropower_via_newtonschulz5(p.grad, steps=5)
+                        # Scale for aspect ratio (following Muon paper)
+                        scale = max(1, p.grad.size(0) / p.grad.size(1)) ** 0.5
+                        # Apply update
+                        p.add_(g_orth.to(p.dtype) * scale, alpha=-lr)
+                    elif p.grad is not None:
+                        # 1D params: standard SGD
+                        p.add_(p.grad, alpha=-lr)
+        elif optimizer_type == 'muon_exact':
+            # Exact SVD orthogonalization: G = UΣV^T → UV^T
+            with torch.no_grad():
+                for p in model.parameters():
+                    if p.grad is not None and p.ndim == 2:
+                        # Exact orthogonalization via SVD
+                        g_orth = orthogonalize_exact_svd(p.grad)
+                        # Scale for aspect ratio
+                        scale = max(1, p.grad.size(0) / p.grad.size(1)) ** 0.5
+                        # Apply update
+                        p.add_(g_orth * scale, alpha=-lr)
+                    elif p.grad is not None:
+                        # 1D params: standard SGD
+                        p.add_(p.grad, alpha=-lr)
+        else:
+            optimizer.step()
+
+        # Logging
+        if epoch % log_interval == 0 or epoch == epochs - 1:
+            history['loss'].append(loss.item())
+            history['epochs_logged'].append(epoch)
+            history['pathway_strengths'].append(model.get_all_pathway_strengths())
+            history['dominance'].append(model.compute_dominance())
+
+            if track_svd:
+                svs = model.get_singular_values()
+                history['svd']['encoders'].append(svs['encoders'])
+                history['svd']['hidden'].append(svs['hidden'])
+                history['svd']['decoders'].append(svs['decoders'])
+
+            if verbose:
+                dom = history['dominance'][-1]
+                iterator.set_postfix(loss=f"{loss.item():.4f}", dom=f"{dom:.3f}")
+
+    return history
+
+
 def train_gated_multiview(
     model,
     dataset,
